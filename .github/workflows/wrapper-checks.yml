@@ -7,10 +7,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    if: github.ref == 'refs/heads/main'
+  diagnostic:
+    if: github.repository == 'afaustov/app-ms-store-reports-runner' && github.actor == 'afaustov' && github.ref == 'refs/heads/chore/store-traffic-probe'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 35
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -18,4 +20,11 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
-      - run: npm test
+      - name: Query traffic sources privately
+        run: node scripts/traffic-probe.js
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
