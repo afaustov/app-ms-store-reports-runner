@@ -15,7 +15,7 @@ export function encrypt(value, key) {
   const nonce = randomBytes(12);
   const data = Buffer.from(JSON.stringify(value));
   // Pad to fixed blocks so ciphertext length does not reveal individual state values.
-  const padded = randomBytes(Math.ceil((data.length + 4) / 65536) * 65536);
+  const padded = randomBytes(Math.ceil((data.length + 4) / 4096) * 4096);
   padded.writeUInt32BE(data.length);
   data.copy(padded, 4);
   const cipher = createCipheriv('aes-256-gcm', keyBytes(key), nonce);

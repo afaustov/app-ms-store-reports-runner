@@ -13,7 +13,7 @@ test('authenticated padded encryption hides plaintext and changes nonce', () => 
   const first = encrypt(state, key);
   assert.deepEqual(decrypt(first, key), state);
   assert.equal(first.includes(Buffer.from('private-sensitive-id')), false);
-  assert.equal(first.length, 65536 + 32);
+  assert.equal(first.length, 4096 + 32);
   assert.notDeepEqual(first, encrypt(state, key));
   assert.throws(() => decrypt(first, '34'.repeat(32)));
   first[100] ^= 1;
