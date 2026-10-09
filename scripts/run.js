@@ -46,6 +46,27 @@ function privateEnvironment() {
   return env;
 }
 
+const MS_CREDENTIALS = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_STORE_APP_ID'];
+const PROFILES = {
+  none: [],
+  app: ['MS_STORE_APP_ID'],
+  analytics: MS_CREDENTIALS,
+  prepare: [...MS_CREDENTIALS, 'NOTION_TOKEN', 'AGENDA_RUNTIME_INCIDENTS_DATA_SOURCE_ID', 'AGENDA_GITHUB_READ_TOKEN'],
+  delivery: [...MS_CREDENTIALS, 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
+  publication: ['REVIEW_FEED_DEPLOY_KEY'],
+};
+const SECRET_VARIABLES = [...new Set(Object.values(PROFILES).flat()), 'GITHUB_TOKEN', 'GH_TOKEN', 'STATE_ENCRYPTION_KEY', 'SOURCE_DEPLOY_KEY', 'NODE_AUTH_TOKEN', 'NPM_TOKEN'];
+
+export function stageEnvironment(profile, parent) {
+  if (!Object.hasOwn(PROFILES, profile)) throw new Error('Invalid credential profile.');
+  const env = { ...parent };
+  for (const name of Object.keys(env)) {
+    if (SECRET_VARIABLES.includes(name) || name.startsWith('ACTIONS_')) delete env[name];
+  }
+  for (const name of PROFILES[profile]) if (parent[name] !== undefined) env[name] = parent[name];
+  return env;
+}
+
 export async function main() {
   const mode = process.env.RUN_MODE;
   if (!['validate', 'validate-reviews', 'daily', 'reviews', 'collect'].includes(mode)) throw new Error('Invalid execution mode.');
@@ -78,8 +99,8 @@ export async function main() {
     }
   }
 
-  async function run(label, command, args, overrides = {}, cwd = checkout) {
-    const result = await execute(command, args, { cwd, env: { ...env, ...overrides } });
+  async function run(label, command, args, overrides = {}, cwd = checkout, profile = 'none') {
+    const result = await execute(command, args, { cwd, env: stageEnvironment(profile, { ...env, ...overrides }) });
     diagnostics.push({ stage: label, ok: result.ok, output: result.output });
     console.log(`${label}: ${result.ok ? 'complete' : 'failed'}.`);
     if (!result.ok) {
@@ -122,11 +143,11 @@ export async function main() {
         return;
       }
       if (mode === 'validate') await run('Validate private source', 'npm', ['test']);
-      if (sourceRunId) await run('Load completed analytics', 'node', [...report, '--phase', 'fetch-existing-analytics']);
+      if (sourceRunId) await run('Load completed analytics', 'node', [...report, '--phase', 'fetch-existing-analytics'], {}, checkout, 'analytics');
       else {
-        const result = await execute('node', [...report, '--phase', 'fetch-current-analytics'], { cwd: checkout, env });
+        const result = await execute('node', [...report, '--phase', 'fetch-current-analytics'], { cwd: checkout, env: stageEnvironment('analytics', env) });
         diagnostics.push({ stage: 'Fetch analytics', ok: result.ok, output: result.output });
-        if (!result.ok) await run('Resume analytics', 'node', [...report, '--phase', 'fetch-existing-analytics'], { MS_STORE_SOURCE_RUN_ID: env.REPORT_DELIVERY_RUN_ID });
+        if (!result.ok) await run('Resume analytics', 'node', [...report, '--phase', 'fetch-existing-analytics'], { MS_STORE_SOURCE_RUN_ID: env.REPORT_DELIVERY_RUN_ID }, checkout, 'analytics');
         else console.log('Fetch analytics: complete.');
       }
       let failures = 0;
@@ -135,13 +156,13 @@ export async function main() {
         const label = `Report ${index + 1}`;
         try {
           if (mode === 'validate') {
-            await run(`${label} prepare`, 'node', [...report, '--phase', 'prepare', '--output-dir', 'artifacts/report-output', '--dry-run'], overrides);
+            await run(`${label} prepare`, 'node', [...report, '--phase', 'prepare', '--output-dir', 'artifacts/report-output', '--dry-run'], overrides, checkout, 'prepare');
             const png = await fs.readFile(path.join(checkout, 'artifacts/report-output', key, 'ms-store-dashboard.png'));
             if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Invalid image.');
             continue;
           }
           await deliverReport(
-            (phase) => run(`${label} ${phase}`, 'node', [...report, '--phase', phase, '--output-dir', 'artifacts/report-output'], overrides),
+            (phase) => run(`${label} ${phase}`, 'node', [...report, '--phase', phase, '--output-dir', 'artifacts/report-output'], overrides, checkout, phase === 'prepare' ? 'prepare' : phase === 'send' ? 'delivery' : 'analytics'),
             checkpoint,
           );
         } catch (error) {
@@ -155,17 +176,17 @@ export async function main() {
       console.log(mode === 'validate' ? 'Validated four dashboard images; no Telegram delivery attempted.' : 'Dashboard processing completed.');
     } else {
       const outputPath = path.join(temporary, 'review-result');
-      await run('Check reviews', 'node', ['scripts/check-store-review-feed.js'], { GITHUB_OUTPUT: outputPath, REVIEW_FEED_COLLECT_ONLY: mode === 'reviews' ? 'false' : 'true' });
+      await run('Check reviews', 'node', ['scripts/check-store-review-feed.js'], { GITHUB_OUTPUT: outputPath, REVIEW_FEED_COLLECT_ONLY: mode === 'reviews' ? 'false' : 'true' }, checkout, 'analytics');
       const result = await fs.readFile(outputPath, 'utf8');
       await checkpoint();
       if (result.split('\n').includes('ready=true')) {
-        await run('Build review feed', 'node', ['scripts/export-store-review-feed.js', '--output', 'artifacts/review-feed.json']);
+        await run('Build review feed', 'node', ['scripts/export-store-review-feed.js', '--output', 'artifacts/review-feed.json'], {}, checkout, 'app');
         if (mode === 'validate-reviews') {
           const feed = JSON.parse(await fs.readFile(path.join(checkout, 'artifacts/review-feed.json'), 'utf8'));
           if (!feed || typeof feed !== 'object') throw new Error('Invalid feed.');
           console.log('Review export validated; no publication attempted.');
         } else {
-          await run('Publish review feed', 'node', ['scripts/publish-store-review-feed.js', 'artifacts/review-feed.json']);
+          await run('Publish review feed', 'node', ['scripts/publish-store-review-feed.js', 'artifacts/review-feed.json'], {}, checkout, 'publication');
           if (!sourceRunId) await fs.writeFile(path.join(checkout, env.REVIEW_FEED_STATE_PATH), JSON.stringify({ version: 1, status: 'idle' }));
           await checkpoint();
           console.log('Review feed processing completed.');
