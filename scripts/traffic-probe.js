@@ -4,13 +4,13 @@ import { createHash } from 'node:crypto';
 const BASE = 'https://manage.devcenter.microsoft.com/consumer/insights/v1.1';
 const APP = '9NLQRWK76W61';
 const REPO = 'afaustov/app-ms-store-reports-runner';
-const PATH = 'traffic-spike-2026-10-09.enc';
+const PATH = process.argv.includes('--status-only') ? 'traffic-status-2026-10-09.enc' : 'traffic-spike-2026-10-09.enc';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let report = { version: 1, files: {}, trafficProbe: { app: APP, startDate: '2026-10-01', endDate: '2026-10-08' } };
 let sha;
 
-async function github(method, body) {
-  const result = await fetch(`https://api.github.com/repos/${REPO}/contents/${PATH}${method === 'GET' ? '?ref=state' : ''}`, {
+async function github(method, body, file = PATH) {
+  const result = await fetch(`https://api.github.com/repos/${REPO}/contents/${file}${method === 'GET' ? '?ref=state' : ''}`, {
     method, headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30_000),
   });
@@ -61,6 +61,20 @@ async function main() {
   if (!response.ok || !auth.access_token) throw new Error('Authentication failed.');
   const token = auth.access_token;
   delete report.trafficProbe.error;
+  if (process.argv.includes('--status-only')) {
+    const parent = await github('GET', undefined, 'traffic-spike-2026-10-09.enc');
+    const primary = decrypt(Buffer.from(parent.content, 'base64'), process.env.STATE_ENCRYPTION_KEY);
+    const id = primary.trafficProbe.reportId;
+    if (!id) throw new Error('No saved traffic report ID.');
+    report.trafficProbe.executionStates = [];
+    for (const status of ['Completed', 'Failed', 'Pending']) {
+      report.trafficProbe.executionStates.push(...values(await api(token, `/ScheduledReport/execution/${id}?${new URLSearchParams({ executionStatus: status, getLatestExecution: 'true' })}`)));
+    }
+    report.trafficProbe.status = 'inspected';
+    await checkpoint();
+    console.log('Existing Microsoft report status inspected; private results encrypted.');
+    return;
+  }
   const schema = values(await api(token, '/ScheduledDataset')).find((item) => item.datasetName === 'ChannelsAndConversions');
   if (!schema) throw new Error('Traffic dataset absent.');
   report.trafficProbe.schema = schema;
