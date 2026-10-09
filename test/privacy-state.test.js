@@ -4,10 +4,22 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { encrypt, decrypt, restoreFiles, collectFiles, StateStore } from '../scripts/state.js';
-import { deliveryDecision, deliverReport, execute, localDate } from '../scripts/run.js';
+import { deliveryDecision, deliverReport, execute, localDate, stageEnvironment } from '../scripts/run.js';
 
 const key = '12'.repeat(32);
 const state = { version: 1, files: { '.review-feed-state/pending.json': '{"reportId":"private-sensitive-id"}' } };
+
+test('installation, clone, and tests receive no provider or orchestration credentials', () => {
+  const parent = { PATH: 'path', MS_CLIENT_SECRET: 'microsoft', TELEGRAM_BOT_TOKEN: 'telegram', NOTION_TOKEN: 'notion', REVIEW_FEED_DEPLOY_KEY: 'publication', STATE_ENCRYPTION_KEY: 'encryption', SOURCE_DEPLOY_KEY: 'ssh', GITHUB_TOKEN: 'state-access', ACTIONS_RUNTIME_TOKEN: 'cache-access', NODE_AUTH_TOKEN: 'registry' };
+  assert.deepEqual(stageEnvironment('none', parent), { PATH: 'path' });
+  assert.deepEqual(stageEnvironment('analytics', parent), { PATH: 'path', MS_CLIENT_SECRET: 'microsoft' });
+  assert.deepEqual(stageEnvironment('publication', parent), { PATH: 'path', REVIEW_FEED_DEPLOY_KEY: 'publication' });
+  const delivery = stageEnvironment('delivery', parent);
+  assert.equal(delivery.TELEGRAM_BOT_TOKEN, 'telegram');
+  assert.equal(delivery.NOTION_TOKEN, undefined);
+  assert.equal(delivery.REVIEW_FEED_DEPLOY_KEY, undefined);
+  assert.throws(() => stageEnvironment('unknown', parent));
+});
 
 test('authenticated padded encryption hides plaintext and changes nonce', () => {
   const first = encrypt(state, key);
