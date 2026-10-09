@@ -7,3 +7,8 @@
 - Confirm durable in-flight state before Telegram; never replay uncertain delivery automatically.
 - No Actions cache or artifact uploads. Bounded private command diagnostics are stored encrypted with the state.
 - Validate against completed Microsoft reports without sending Telegram or publishing reviews. Do not create new Microsoft reports merely to test migration.
+
+## Activation status
+
+- Public cloud wrapper tests passed on October 9, 2026. Scheduled production execution remains gated until the private bootstrap and no-delivery validation complete.
+- Do not enable scheduled execution with missing application secrets or encrypted state. Keep the original delivery owner active until cutover is verified.
