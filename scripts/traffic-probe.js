@@ -70,6 +70,10 @@ async function main() {
     for (const status of ['Completed', 'Failed', 'Pending']) {
       report.trafficProbe.executionStates.push(...values(await api(token, `/ScheduledReport/execution/${id}?${new URLSearchParams({ executionStatus: status, getLatestExecution: 'true' })}`)));
     }
+    // Cross-check the documented synchronous channel endpoint without ordering another report.
+    const directParams = new URLSearchParams({ applicationId: APP, startDate: '2026-10-06', endDate: '2026-10-06', aggregationLevel: 'day', groupby: 'channelType,customCampaignId,referrerUriDomain,market,storeClient,deviceType', top: '10000', skip: '0' });
+    const directResponse = await fetch(`https://manage.devcenter.microsoft.com/v1.0/my/analytics/appchannelconversions?${directParams}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
+    report.trafficProbe.directChannels = { status: directResponse.status, data: await directResponse.json() };
     report.trafficProbe.status = 'inspected';
     await checkpoint();
     console.log('Existing Microsoft report status inspected; private results encrypted.');
