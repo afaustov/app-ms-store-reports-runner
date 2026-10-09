@@ -75,10 +75,15 @@ async function main() {
     const directResponse = await fetch(`https://manage.devcenter.microsoft.com/v1.0/my/analytics/appchannelconversions?${directParams}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
     report.trafficProbe.directChannels = { status: directResponse.status, data: await directResponse.json() };
     report.trafficProbe.previousDays = [];
-    for (const date of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05']) {
-      const params = new URLSearchParams({ applicationId: APP, startDate: date, endDate: date, aggregationLevel: 'day', groupby: 'channelType,customCampaignId,referrerUriDomain,market,storeClient,deviceType', top: '10000', skip: '0' });
+    await sleep(65_000);
+    const params = new URLSearchParams({ applicationId: APP, startDate: '2026-10-01', endDate: '2026-10-05', aggregationLevel: 'day', groupby: 'channelType,customCampaignId,referrerUriDomain,market,storeClient,deviceType', top: '10000', skip: '0' });
+    for (let attempt = 0; attempt < 4; attempt++) {
       const response = await fetch(`https://manage.devcenter.microsoft.com/v1.0/my/analytics/appchannelconversions?${params}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
-      report.trafficProbe.previousDays.push({ date, status: response.status, data: await response.json() });
+      const data = await response.json();
+      report.trafficProbe.previousDays = [{ date: '2026-10-01..2026-10-05', status: response.status, data }];
+      if (response.status !== 429) break;
+      const retryAfter = Number(response.headers.get('retry-after')) || 65;
+      await sleep(Math.max(65, retryAfter) * 1000);
     }
     report.trafficProbe.status = 'inspected';
     await checkpoint();
