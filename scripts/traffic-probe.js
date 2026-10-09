@@ -27,7 +27,7 @@ async function checkpoint() {
 async function api(token, route, body) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const response = await fetch(`${BASE}${route}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(45_000) });
-    if (!body && response.status === 404 && route.includes('/execution/')) return { value: [] };
+    if (!body && response.status === 404 && (route.includes('/execution/') || route.startsWith('/ScheduledQueries?') || route.startsWith('/ScheduledReport?'))) return { value: [] };
     if (!body && [429, 500, 502, 503, 504].includes(response.status) && attempt < 3) {
       await sleep(Math.max(3000, Number(response.headers.get('retry-after') || 3) * 1000)); continue;
     }
@@ -60,6 +60,7 @@ async function main() {
   const auth = await response.json();
   if (!response.ok || !auth.access_token) throw new Error('Authentication failed.');
   const token = auth.access_token;
+  delete report.trafficProbe.error;
   const schema = values(await api(token, '/ScheduledDataset')).find((item) => item.datasetName === 'ChannelsAndConversions');
   if (!schema) throw new Error('Traffic dataset absent.');
   report.trafficProbe.schema = schema;
