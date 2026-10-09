@@ -74,6 +74,12 @@ async function main() {
     const directParams = new URLSearchParams({ applicationId: APP, startDate: '2026-10-06', endDate: '2026-10-06', aggregationLevel: 'day', groupby: 'channelType,customCampaignId,referrerUriDomain,market,storeClient,deviceType', top: '10000', skip: '0' });
     const directResponse = await fetch(`https://manage.devcenter.microsoft.com/v1.0/my/analytics/appchannelconversions?${directParams}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
     report.trafficProbe.directChannels = { status: directResponse.status, data: await directResponse.json() };
+    report.trafficProbe.previousDays = [];
+    for (const date of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05']) {
+      const params = new URLSearchParams({ applicationId: APP, startDate: date, endDate: date, aggregationLevel: 'day', groupby: 'channelType,customCampaignId,referrerUriDomain,market,storeClient,deviceType', top: '10000', skip: '0' });
+      const response = await fetch(`https://manage.devcenter.microsoft.com/v1.0/my/analytics/appchannelconversions?${params}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
+      report.trafficProbe.previousDays.push({ date, status: response.status, data: await response.json() });
+    }
     report.trafficProbe.status = 'inspected';
     await checkpoint();
     console.log('Existing Microsoft report status inspected; private results encrypted.');
