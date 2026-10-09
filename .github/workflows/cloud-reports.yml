@@ -1,0 +1,61 @@
+name: Cloud reports
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Operation (validation never sends dashboards or publishes reviews)
+        type: choice
+        default: validate
+        options: [validate, validate-reviews, daily, reviews, collect]
+      source_run_id:
+        description: Existing completed analytics or reviews runId-attempt
+        type: string
+        required: false
+  schedule:
+    - cron: '0 21 * * *'
+    - cron: '17 4 * * 0'
+    - cron: '47 5 * * 0'
+
+concurrency:
+  group: cloud-reports
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  execute:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.REPORTS_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Load public wrapper
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+      - name: Execute with encrypted checkpoints
+        run: node scripts/run.js
+        env:
+          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || 'daily')) }}
+          MS_STORE_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PRIVATE_SOURCE_REPOSITORY: ${{ vars.PRIVATE_SOURCE_REPOSITORY }}
+          SOURCE_KNOWN_HOSTS: ${{ vars.SOURCE_KNOWN_HOSTS }}
+          REVIEW_FEED_REPOSITORY: ${{ vars.REVIEW_FEED_REPOSITORY }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          AGENDA_RUNTIME_INCIDENTS_DATA_SOURCE_ID: ${{ secrets.AGENDA_RUNTIME_INCIDENTS_DATA_SOURCE_ID }}
+          AGENDA_GITHUB_READ_TOKEN: ${{ secrets.AGENDA_GITHUB_READ_TOKEN }}
+          REVIEW_FEED_DEPLOY_KEY: ${{ secrets.REVIEW_FEED_DEPLOY_KEY }}
