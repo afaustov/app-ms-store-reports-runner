@@ -10,5 +10,8 @@
 
 ## Activation status
 
-- Public cloud wrapper tests passed on October 9, 2026. Scheduled production execution remains gated until the private bootstrap and no-delivery validation complete.
-- Do not enable scheduled execution with missing application secrets or encrypted state. Keep the original delivery owner active until cutover is verified.
+- Production schedules are enabled after the October 9, 2026 migration. Legacy private daily/review workflows are disabled and their schedules removed.
+- Secured wrapper checks passed 14 tests. Cloud validation passed 38 private application tests and rendered four dashboard images without sending. Saved reviews were exported without publishing. A daily test skipped all four same-day sent dashboards.
+- Only the owner has repository write access. Main requires owner review; owner admin bypass is retained. Force pushes and deletion are disabled. Actions policy permits only the two exact pinned checkout/setup-node revisions; secret scanning and push protection are enabled.
+- Each child stage receives only its required provider credentials. Installation, clone, and tests receive none. No workflow executes PR/fork code.
+- Public history and completed run logs were checked for known keys, token/private-key patterns, and exposed private diagnostics; no matches were found. This does not guarantee protection against a compromised owner account, runner, trusted action, or application dependency.
