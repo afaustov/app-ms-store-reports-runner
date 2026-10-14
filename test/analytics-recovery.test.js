@@ -26,7 +26,8 @@ test('same-day retries resume their request; old, missing, and corrupt checkpoin
   assert.equal(analyticsDecision(created, '2026-10-14', '123456791-1', '', 'daily').allowCreate, false);
   assert.throws(() => analyticsDecision({ ...created, date: '2026-10-15' }, '2026-10-14', '', '', 'retry'));
   assert.throws(() => analyticsDecision({ ...created, status: 'invalid' }, '2026-10-14', '', '', 'retry'));
-  assert.equal(finalAnalyticsCheck('retry', new Date('2026-10-14T04:15:00Z')), true);
+  assert.equal(finalAnalyticsCheck('retry', new Date('2026-10-14T04:15:00Z')), false);
+  assert.equal(finalAnalyticsCheck('retry', new Date('2026-10-14T15:15:00Z')), true);
   assert.equal(finalAnalyticsCheck('retry', new Date('2026-10-14T03:15:00Z')), false);
 });
 
@@ -70,8 +71,8 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
   assert.equal(sends, 0);
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'retry';
-  const noon = new Date(`${localDate()}T12:15:00+08:00`);
-  await assert.rejects(main({ store, execute, now: () => noon }), /still pending/);
+  const lastCheck = new Date(`${localDate()}T23:15:00+08:00`);
+  await assert.rejects(main({ store, execute, now: () => lastCheck }), /still pending/);
   assert.equal(sends, 0);
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'daily';
