@@ -115,7 +115,8 @@ export async function main(options = {}) {
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
-  if (sourceRunId && !/^\d+-\d+$/.test(sourceRunId)) throw new Error('Invalid source run ID.');
+  const validSource = mode === 'diagnose' ? /^\d+-\d+(,\d+-\d+)?$/ : /^\d+-\d+$/;
+  if (sourceRunId && !validSource.test(sourceRunId)) throw new Error('Invalid source run ID.');
   if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
   if (mode === 'repair' && !sourceRunId) throw new Error('Repair requires the exact unstarted source run.');
   const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
