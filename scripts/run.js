@@ -111,18 +111,17 @@ export async function main(options = {}) {
   const executeImpl = options.execute || execute;
   const now = options.now || (() => new Date());
   const mode = process.env.RUN_MODE;
-  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose', 'repair', 'direct', 'retire'].includes(mode)) throw new Error('Invalid execution mode.');
+  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose', 'repair', 'direct'].includes(mode)) throw new Error('Invalid execution mode.');
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
   if (sourceRunId && !/^\d+-\d+$/.test(sourceRunId)) throw new Error('Invalid source run ID.');
   if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
   if (mode === 'repair' && !sourceRunId) throw new Error('Repair requires the exact unstarted source run.');
-  if (mode === 'retire' && !sourceRunId) throw new Error('Retirement requires the exact unstarted source run.');
   const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
   const state = await store.load();
   const date = localDate(now());
-  if (sourceRunId && ['daily', 'retry', 'validate', 'repair', 'direct', 'retire'].includes(mode)) {
+  if (sourceRunId && ['daily', 'retry', 'validate', 'repair', 'direct'].includes(mode)) {
     await verifyAnalyticsSource(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN, sourceRunId, date);
   }
   let analytics = ['daily', 'retry', 'validate', 'repair', 'direct'].includes(mode)
@@ -255,14 +254,6 @@ export async function main(options = {}) {
       }
       if (failures) throw new Error('Some reports failed.');
       console.log(mode === 'validate' ? 'Validated four dashboard images; no Telegram delivery attempted.' : 'Dashboard processing completed.');
-    } else if (mode === 'retire') {
-      await run('Install diagnostic runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
-      const proofPath = path.join(temporary, 'retirement-proof');
-      await run('Pause verified unstarted reports', 'node', ['scripts/check-store-dashboard-analytics.js'], {
-        MS_STORE_SOURCE_RUN_ID: sourceRunId, DASHBOARD_VERIFY_MISSING: 'true', DASHBOARD_PAUSE_MISSING: 'true',
-        DASHBOARD_CREATE_MISSING: 'false', DASHBOARD_FETCH_METHOD: 'async', GITHUB_OUTPUT: proofPath,
-      }, checkout, 'analytics');
-      if (await fs.readFile(proofPath, 'utf8') !== 'verified_missing=true\n') throw new Error('Retirement was not confirmed.');
     } else if (mode === 'diagnose') {
       await run('Install diagnostic runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       await run('Diagnose Microsoft execution', 'node', ['scripts/diagnose-store-dashboard-analytics.js'], {}, checkout, 'analytics');
