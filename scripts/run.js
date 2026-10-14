@@ -18,6 +18,38 @@ export function deliveryDecision(raw, date) {
   return state.status === 'sent' || state.status === 'in_flight' ? 'skip' : 'run';
 }
 
+export function analyticsDecision(saved, date, sourceRunId, currentRunId, mode) {
+  if (saved) {
+    if (saved.version !== 1 || !/^\d{4}-\d{2}-\d{2}$/.test(saved.date)
+      || !/^\d{8,}-\d+$/.test(saved.sourceRunId) || !['pending', 'ready'].includes(saved.status)
+      || typeof saved.allowCreate !== 'boolean') {
+      throw new Error('Invalid analytics checkpoint.');
+    }
+    if (saved.date > date) throw new Error('Future analytics checkpoint.');
+  }
+  if (mode === 'retry' && (!saved || saved.date !== date)) return null;
+  const existing = sourceRunId || (saved?.date === date ? saved.sourceRunId : '');
+  const allowCreate = !sourceRunId && (!existing || saved.allowCreate);
+  return { version: 1, date, sourceRunId: existing || currentRunId, status: 'pending', allowCreate };
+}
+
+export function finalAnalyticsCheck(mode, now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  return mode === 'retry' && hour >= 12;
+}
+
+export async function verifyAnalyticsSource(repository, token, runId, date, request = fetch) {
+  const [id, attempt] = runId.split('-');
+  const response = await request(`https://api.github.com/repos/${repository}/actions/runs/${id}`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error('Analytics source verification failed.');
+  const source = await response.json();
+  if (!source.created_at || Number(source.run_attempt) < Number(attempt)
+    || localDate(new Date(source.created_at)) !== date) throw new Error('Analytics source must be from the current local date.');
+}
+
 export async function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     let output = '';
@@ -67,16 +99,29 @@ export function stageEnvironment(profile, parent) {
   return env;
 }
 
-export async function main() {
+export async function main(options = {}) {
+  const executeImpl = options.execute || execute;
+  const now = options.now || (() => new Date());
   const mode = process.env.RUN_MODE;
-  if (!['validate', 'validate-reviews', 'daily', 'reviews', 'collect'].includes(mode)) throw new Error('Invalid execution mode.');
+  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect'].includes(mode)) throw new Error('Invalid execution mode.');
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
   if (sourceRunId && !/^\d+-\d+$/.test(sourceRunId)) throw new Error('Invalid source run ID.');
   if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
-  const store = new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
+  const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
   const state = await store.load();
+  const date = localDate(now());
+  if (sourceRunId && ['daily', 'retry', 'validate'].includes(mode)) {
+    await verifyAnalyticsSource(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN, sourceRunId, date);
+  }
+  const analytics = ['daily', 'retry', 'validate'].includes(mode)
+    ? analyticsDecision(state.analytics, date, sourceRunId, `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, mode)
+    : null;
+  if (mode === 'retry' && !analytics) {
+    console.log('No current dashboard request to retry.');
+    return;
+  }
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'private-cloud-job-'));
   const checkout = path.join(temporary, 'source');
   const env = privateEnvironment();
@@ -100,7 +145,7 @@ export async function main() {
   }
 
   async function run(label, command, args, overrides = {}, cwd = checkout, profile = 'none') {
-    const result = await execute(command, args, { cwd, env: stageEnvironment(profile, { ...env, ...overrides }) });
+    const result = await executeImpl(command, args, { cwd, env: stageEnvironment(profile, { ...env, ...overrides }) });
     diagnostics.push({ stage: label, ok: result.ok, output: result.output });
     console.log(`${label}: ${result.ok ? 'complete' : 'failed'}.`);
     if (!result.ok) {
@@ -123,7 +168,7 @@ export async function main() {
     checkoutReady = true;
     await fs.rm(keyPath, { force: true });
 
-    if (mode === 'daily' || mode === 'validate') {
+    if (mode === 'daily' || mode === 'retry' || mode === 'validate') {
       await run('Install runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       const report = ['scripts/ms-store-daily-report.js'];
       const apps = [
@@ -132,24 +177,40 @@ export async function main() {
         ['file-dock-widget', '9NQJ0XTPV4RP'],
         ['ai-usage-limits-codex', '9NLQRWK76W61'],
       ];
-      const date = localDate();
       const pending = apps.filter(([key]) => {
         const raw = state.files[`.report-state/${key}/delivery-state.json`];
         const legacy = state.files[`.report-state/${key}/last-delivery-date.txt`]?.trim();
         return raw ? deliveryDecision(raw, date) === 'run' : legacy !== date;
       });
-      if (mode === 'daily' && pending.length === 0) {
+      if (mode !== 'validate' && pending.length === 0) {
         console.log('All deliveries are already sent or protected; nothing resent.');
         return;
       }
       if (mode === 'validate') await run('Validate private source', 'npm', ['test']);
-      if (sourceRunId) await run('Load completed analytics', 'node', [...report, '--phase', 'fetch-existing-analytics'], {}, checkout, 'analytics');
-      else {
-        const result = await execute('node', [...report, '--phase', 'fetch-current-analytics'], { cwd: checkout, env: stageEnvironment('analytics', env) });
-        diagnostics.push({ stage: 'Fetch analytics', ok: result.ok, output: result.output });
-        if (!result.ok) await run('Resume analytics', 'node', [...report, '--phase', 'fetch-existing-analytics'], { MS_STORE_SOURCE_RUN_ID: env.REPORT_DELIVERY_RUN_ID }, checkout, 'analytics');
-        else console.log('Fetch analytics: complete.');
+      // Save the request identity before starting Microsoft work. Retries reuse it across jobs.
+      if (mode !== 'validate') {
+        state.analytics = analytics;
+        await checkpoint();
       }
+      const readinessPath = path.join(temporary, 'dashboard-readiness');
+      await run('Check dashboard analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
+        MS_STORE_SOURCE_RUN_ID: analytics.sourceRunId,
+        DASHBOARD_CREATE_MISSING: String(analytics.allowCreate),
+        GITHUB_OUTPUT: readinessPath,
+      }, checkout, 'analytics');
+      const readiness = await fs.readFile(readinessPath, 'utf8');
+      if (readiness !== 'ready=true\n' && readiness !== 'ready=false\n') throw new Error('Invalid dashboard readiness.');
+      if (readiness === 'ready=false\n') {
+        await checkpoint();
+        if (mode === 'validate' || finalAnalyticsCheck(mode, now())) throw new Error('Dashboard analytics are still pending.');
+        console.log('Dashboard analytics pending; encrypted request retained for a later check.');
+        return;
+      }
+      if (mode !== 'validate') {
+        state.analytics.status = 'ready';
+        await checkpoint();
+      }
+      if (localDate(now()) !== date) throw new Error('Local delivery date changed while collecting analytics.');
       let failures = 0;
       for (const [index, [key, appId]] of (mode === 'validate' ? apps : pending).entries()) {
         const overrides = { REPORT_STATE_KEY: key, MS_STORE_APP_ID: appId };

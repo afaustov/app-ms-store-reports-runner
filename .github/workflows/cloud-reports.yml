@@ -7,13 +7,14 @@ on:
         description: Operation (validation never sends dashboards or publishes reviews)
         type: choice
         default: validate
-        options: [validate, validate-reviews, daily, reviews, collect]
+        options: [validate, validate-reviews, daily, retry, reviews, collect]
       source_run_id:
         description: Existing completed analytics or reviews runId-attempt
         type: string
         required: false
   schedule:
     - cron: '0 21 * * *'
+    - cron: '15 22,23,0,1,2,3,4 * * *'
     - cron: '17 4 * * 0'
     - cron: '47 5 * * 0'
 
@@ -23,6 +24,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   execute:
@@ -41,7 +43,7 @@ jobs:
       - name: Execute with encrypted checkpoints
         run: node scripts/run.js
         env:
-          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || 'daily')) }}
+          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || (github.event.schedule == '15 22,23,0,1,2,3,4 * * *' && 'retry' || 'daily'))) }}
           MS_STORE_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           GITHUB_TOKEN: ${{ github.token }}
           PRIVATE_SOURCE_REPOSITORY: ${{ vars.PRIVATE_SOURCE_REPOSITORY }}
