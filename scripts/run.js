@@ -35,7 +35,7 @@ export function analyticsDecision(saved, date, sourceRunId, currentRunId, mode) 
 
 export function finalAnalyticsCheck(mode, now = new Date()) {
   const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hourCycle: 'h23' }).format(now));
-  return mode === 'retry' && hour >= 12;
+  return mode === 'retry' && hour >= 23;
 }
 
 export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
