@@ -24,6 +24,7 @@ test('same-day retries resume their request; old, missing, and corrupt checkpoin
   assert.equal(analyticsDecision(null, '2026-10-14', '', '123456789-1', 'retry'), null);
   assert.equal(analyticsDecision(created, '2026-10-15', '', '123456790-1', 'daily').sourceRunId, '123456790-1');
   assert.equal(analyticsDecision(created, '2026-10-14', '123456791-1', '', 'daily').allowCreate, false);
+  assert.equal(analyticsDecision({ ...created, method: 'query' }, '2026-10-14', '', '123456790-1', 'retry').method, 'query');
   assert.throws(() => analyticsDecision({ ...created, date: '2026-10-15' }, '2026-10-14', '', '', 'retry'));
   assert.throws(() => analyticsDecision({ ...created, status: 'invalid' }, '2026-10-14', '', '', 'retry'));
   assert.equal(finalAnalyticsCheck('retry', new Date('2026-10-14T04:15:00Z')), false);
@@ -55,6 +56,7 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
     if (args[0] === 'scripts/check-store-dashboard-analytics.js') {
       sources.push(options.env.MS_STORE_SOURCE_RUN_ID);
       assert.equal(saved.analytics.sourceRunId, '123456789-1');
+      if (process.env.RUN_MODE === 'direct') assert.equal(options.env.DASHBOARD_FETCH_METHOD, 'query');
       await fs.writeFile(options.env.GITHUB_OUTPUT, `ready=${ready}\n`);
     }
     if (args.includes('--phase')) {
@@ -77,6 +79,7 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'daily';
   ready = true;
+  process.env.RUN_MODE = 'direct';
   // Manual daily recovery and scheduled retry share the same saved request.
   process.env.GITHUB_RUN_ID = '123456790';
   await main({ store, execute });

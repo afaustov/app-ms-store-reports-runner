@@ -26,11 +26,13 @@ export function analyticsDecision(saved, date, sourceRunId, currentRunId, mode) 
       throw new Error('Invalid analytics checkpoint.');
     }
     if (saved.date > date) throw new Error('Future analytics checkpoint.');
+    if (saved.method !== undefined && !['async', 'query'].includes(saved.method)) throw new Error('Invalid analytics collection method.');
   }
   if (mode === 'retry' && (!saved || saved.date !== date)) return null;
   const existing = sourceRunId || (saved?.date === date ? saved.sourceRunId : '');
   const allowCreate = !sourceRunId && (!existing || saved.allowCreate);
-  return { version: 1, date, sourceRunId: existing || currentRunId, status: 'pending', allowCreate };
+  const method = sourceRunId ? 'async' : saved?.date === date ? (saved.method || 'async') : 'async';
+  return { version: 1, date, sourceRunId: existing || currentRunId, status: 'pending', allowCreate, method };
 }
 
 export function finalAnalyticsCheck(mode, now = new Date()) {
@@ -109,7 +111,7 @@ export async function main(options = {}) {
   const executeImpl = options.execute || execute;
   const now = options.now || (() => new Date());
   const mode = process.env.RUN_MODE;
-  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose', 'repair'].includes(mode)) throw new Error('Invalid execution mode.');
+  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose', 'repair', 'direct'].includes(mode)) throw new Error('Invalid execution mode.');
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
@@ -119,12 +121,13 @@ export async function main(options = {}) {
   const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
   const state = await store.load();
   const date = localDate(now());
-  if (sourceRunId && ['daily', 'retry', 'validate', 'repair'].includes(mode)) {
+  if (sourceRunId && ['daily', 'retry', 'validate', 'repair', 'direct'].includes(mode)) {
     await verifyAnalyticsSource(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN, sourceRunId, date);
   }
-  let analytics = ['daily', 'retry', 'validate', 'repair'].includes(mode)
+  let analytics = ['daily', 'retry', 'validate', 'repair', 'direct'].includes(mode)
     ? analyticsDecision(state.analytics, date, sourceRunId, `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, mode)
     : null;
+  if (mode === 'direct') analytics.method = 'query';
   if (mode === 'retry' && !analytics) {
     console.log('No current dashboard request to retry.');
     return;
@@ -175,7 +178,7 @@ export async function main(options = {}) {
     checkoutReady = true;
     await fs.rm(keyPath, { force: true });
 
-    if (mode === 'daily' || mode === 'retry' || mode === 'validate' || mode === 'repair') {
+    if (mode === 'daily' || mode === 'retry' || mode === 'validate' || mode === 'repair' || mode === 'direct') {
       await run('Install runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       const report = ['scripts/ms-store-daily-report.js'];
       const apps = [
@@ -211,6 +214,7 @@ export async function main(options = {}) {
       await run('Check dashboard analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
         MS_STORE_SOURCE_RUN_ID: analytics.sourceRunId,
         DASHBOARD_CREATE_MISSING: String(analytics.allowCreate),
+        DASHBOARD_FETCH_METHOD: analytics.method,
         GITHUB_OUTPUT: readinessPath,
       }, checkout, 'analytics');
       const readiness = await fs.readFile(readinessPath, 'utf8');
