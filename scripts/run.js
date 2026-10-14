@@ -103,7 +103,7 @@ export async function main(options = {}) {
   const executeImpl = options.execute || execute;
   const now = options.now || (() => new Date());
   const mode = process.env.RUN_MODE;
-  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect'].includes(mode)) throw new Error('Invalid execution mode.');
+  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose'].includes(mode)) throw new Error('Invalid execution mode.');
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
@@ -235,6 +235,9 @@ export async function main(options = {}) {
       }
       if (failures) throw new Error('Some reports failed.');
       console.log(mode === 'validate' ? 'Validated four dashboard images; no Telegram delivery attempted.' : 'Dashboard processing completed.');
+    } else if (mode === 'diagnose') {
+      await run('Install diagnostic runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
+      await run('Diagnose Microsoft execution', 'node', ['scripts/diagnose-store-dashboard-analytics.js'], {}, checkout, 'analytics');
     } else {
       const outputPath = path.join(temporary, 'review-result');
       await run('Check reviews', 'node', ['scripts/check-store-review-feed.js'], { GITHUB_OUTPUT: outputPath, REVIEW_FEED_COLLECT_ONLY: mode === 'reviews' ? 'false' : 'true' }, checkout, 'analytics');
