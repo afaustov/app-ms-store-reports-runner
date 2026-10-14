@@ -7,7 +7,7 @@ on:
         description: Operation (validation never sends dashboards or publishes reviews)
         type: choice
         default: validate
-        options: [validate, validate-reviews, daily, retry, reviews, collect, diagnose]
+        options: [validate, validate-reviews, daily, retry, reviews, collect, diagnose, repair]
       source_run_id:
         description: Existing completed analytics or reviews runId-attempt
         type: string

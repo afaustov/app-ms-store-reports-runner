@@ -38,6 +38,12 @@ export function finalAnalyticsCheck(mode, now = new Date()) {
   return mode === 'retry' && hour >= 12;
 }
 
+export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
+  if (proof !== 'verified_missing=true\n') throw new Error('Analytics replacement was not verified.');
+  state.analyticsHistory = [...(state.analyticsHistory || []), { ...previous, replacedAt: new Date().toISOString() }].slice(-8);
+  return analyticsDecision(null, date, '', currentRunId, 'daily');
+}
+
 export async function verifyAnalyticsSource(repository, token, runId, date, request = fetch) {
   const [id, attempt] = runId.split('-');
   const response = await request(`https://api.github.com/repos/${repository}/actions/runs/${id}`, {
@@ -103,19 +109,20 @@ export async function main(options = {}) {
   const executeImpl = options.execute || execute;
   const now = options.now || (() => new Date());
   const mode = process.env.RUN_MODE;
-  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose'].includes(mode)) throw new Error('Invalid execution mode.');
+  if (!['validate', 'validate-reviews', 'daily', 'retry', 'reviews', 'collect', 'diagnose', 'repair'].includes(mode)) throw new Error('Invalid execution mode.');
   const source = process.env.PRIVATE_SOURCE_REPOSITORY;
   if (!/^[\w-]+\/[\w.-]+$/.test(source || '')) throw new Error('Invalid source repository.');
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
   if (sourceRunId && !/^\d+-\d+$/.test(sourceRunId)) throw new Error('Invalid source run ID.');
   if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
+  if (mode === 'repair' && !sourceRunId) throw new Error('Repair requires the exact unstarted source run.');
   const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
   const state = await store.load();
   const date = localDate(now());
-  if (sourceRunId && ['daily', 'retry', 'validate'].includes(mode)) {
+  if (sourceRunId && ['daily', 'retry', 'validate', 'repair'].includes(mode)) {
     await verifyAnalyticsSource(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN, sourceRunId, date);
   }
-  const analytics = ['daily', 'retry', 'validate'].includes(mode)
+  let analytics = ['daily', 'retry', 'validate', 'repair'].includes(mode)
     ? analyticsDecision(state.analytics, date, sourceRunId, `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, mode)
     : null;
   if (mode === 'retry' && !analytics) {
@@ -168,7 +175,7 @@ export async function main(options = {}) {
     checkoutReady = true;
     await fs.rm(keyPath, { force: true });
 
-    if (mode === 'daily' || mode === 'retry' || mode === 'validate') {
+    if (mode === 'daily' || mode === 'retry' || mode === 'validate' || mode === 'repair') {
       await run('Install runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       const report = ['scripts/ms-store-daily-report.js'];
       const apps = [
@@ -187,6 +194,14 @@ export async function main(options = {}) {
         return;
       }
       if (mode === 'validate') await run('Validate private source', 'npm', ['test']);
+      if (mode === 'repair') {
+        const proofPath = path.join(temporary, 'unstarted-proof');
+        await run('Verify unstarted analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
+          MS_STORE_SOURCE_RUN_ID: sourceRunId, DASHBOARD_VERIFY_MISSING: 'true',
+          DASHBOARD_CREATE_MISSING: 'false', GITHUB_OUTPUT: proofPath,
+        }, checkout, 'analytics');
+        analytics = replaceUnstartedAnalytics(state, analytics, date, env.REPORT_DELIVERY_RUN_ID, await fs.readFile(proofPath, 'utf8'));
+      }
       // Save the request identity before starting Microsoft work. Retries reuse it across jobs.
       if (mode !== 'validate') {
         state.analytics = analytics;

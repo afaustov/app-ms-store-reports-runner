@@ -2,7 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { analyticsDecision, finalAnalyticsCheck, localDate, main, verifyAnalyticsSource } from '../scripts/run.js';
+import { analyticsDecision, finalAnalyticsCheck, localDate, main, verifyAnalyticsSource, replaceUnstartedAnalytics } from '../scripts/run.js';
+
+test('request replacement needs explicit proof and retains the previous request and every delivery checkpoint', () => {
+  const previous = analyticsDecision(null, '2026-10-14', '', '123456789-1', 'daily');
+  const state = { files: { '.report-state/app/delivery-state.json': 'do-not-change' } };
+  assert.throws(() => replaceUnstartedAnalytics(state, previous, '2026-10-14', '123456790-1', 'ready=false\n'));
+  assert.equal(state.analyticsHistory, undefined);
+  const next = replaceUnstartedAnalytics(state, previous, '2026-10-14', '123456790-1', 'verified_missing=true\n');
+  assert.equal(next.sourceRunId, '123456790-1');
+  assert.equal(next.allowCreate, true);
+  assert.equal(state.analyticsHistory[0].sourceRunId, previous.sourceRunId);
+  assert.equal(state.files['.report-state/app/delivery-state.json'], 'do-not-change');
+});
 
 test('same-day retries resume their request; old, missing, and corrupt checkpoints are handled safely', () => {
   const created = analyticsDecision(null, '2026-10-14', '', '123456789-1', 'daily');
