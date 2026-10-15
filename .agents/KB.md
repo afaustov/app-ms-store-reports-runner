@@ -14,6 +14,7 @@
 
 ## Dashboard asynchronous recovery
 
+- Normal daily and retry runs use current API queries by default, including after the Singapore date changes and when resuming a legacy async checkpoint. Explicit source recovery and verified repair retain async collection. October 15's recurrence was caused by the old default resetting yesterday's successful query method to async on a new day; date-rollover and ordinary-retry delivery regression checks now cover this selection.
 - Manual `repair` requires an explicit same-day source run. It verifies that all five original reports have no execution records before replacing their request identity. The previous identity is retained in encrypted `analyticsHistory`; delivery checkpoints are never reset. Any existing execution refuses replacement.
 - Manual `diagnose` performs bounded control requests through private source and stores responses only in encrypted diagnostics. It does not send dashboards or publish reviews.
 

@@ -12,6 +12,7 @@ test('request replacement needs explicit proof and retains the previous request 
   const next = replaceUnstartedAnalytics(state, previous, '2026-10-14', '123456790-1', 'verified_missing=true\n');
   assert.equal(next.sourceRunId, '123456790-1');
   assert.equal(next.allowCreate, true);
+  assert.equal(next.method, 'async');
   assert.equal(state.analyticsHistory[0].sourceRunId, previous.sourceRunId);
   assert.equal(state.files['.report-state/app/delivery-state.json'], 'do-not-change');
 });
@@ -19,11 +20,15 @@ test('request replacement needs explicit proof and retains the previous request 
 test('same-day retries resume their request; old, missing, and corrupt checkpoints are handled safely', () => {
   const created = analyticsDecision(null, '2026-10-14', '', '123456789-1', 'daily');
   assert.equal(created.allowCreate, true);
+  assert.equal(created.method, 'query');
   assert.deepEqual(analyticsDecision(created, '2026-10-14', '', '123456790-1', 'retry'), created);
   assert.equal(analyticsDecision(created, '2026-10-15', '', '123456790-1', 'retry'), null);
   assert.equal(analyticsDecision(null, '2026-10-14', '', '123456789-1', 'retry'), null);
   assert.equal(analyticsDecision(created, '2026-10-15', '', '123456790-1', 'daily').sourceRunId, '123456790-1');
+  assert.equal(analyticsDecision({ ...created, method: 'async' }, '2026-10-15', '', '123456790-1', 'daily').method, 'query');
+  assert.equal(analyticsDecision({ ...created, method: 'async' }, '2026-10-14', '', '123456790-1', 'retry').method, 'query');
   assert.equal(analyticsDecision(created, '2026-10-14', '123456791-1', '', 'daily').allowCreate, false);
+  assert.equal(analyticsDecision(created, '2026-10-14', '123456791-1', '', 'daily').method, 'async');
   assert.equal(analyticsDecision({ ...created, method: 'query' }, '2026-10-14', '', '123456790-1', 'retry').method, 'query');
   assert.throws(() => analyticsDecision({ ...created, date: '2026-10-15' }, '2026-10-14', '', '', 'retry'));
   assert.throws(() => analyticsDecision({ ...created, status: 'invalid' }, '2026-10-14', '', '', 'retry'));
@@ -56,7 +61,7 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
     if (args[0] === 'scripts/check-store-dashboard-analytics.js') {
       sources.push(options.env.MS_STORE_SOURCE_RUN_ID);
       assert.equal(saved.analytics.sourceRunId, '123456789-1');
-      if (process.env.RUN_MODE === 'direct') assert.equal(options.env.DASHBOARD_FETCH_METHOD, 'query');
+      assert.equal(options.env.DASHBOARD_FETCH_METHOD, 'query');
       await fs.writeFile(options.env.GITHUB_OUTPUT, `ready=${ready}\n`);
     }
     if (args.includes('--phase')) {
@@ -79,8 +84,8 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'daily';
   ready = true;
-  process.env.RUN_MODE = 'direct';
-  // Manual daily recovery and scheduled retry share the same saved request.
+  process.env.RUN_MODE = 'retry';
+  // An ordinary scheduled retry completes delivery without requiring manual direct mode.
   process.env.GITHUB_RUN_ID = '123456790';
   await main({ store, execute });
   assert.equal(sends, 4);
