@@ -31,7 +31,8 @@ export function analyticsDecision(saved, date, sourceRunId, currentRunId, mode) 
   if (mode === 'retry' && (!saved || saved.date !== date)) return null;
   const existing = sourceRunId || (saved?.date === date ? saved.sourceRunId : '');
   const allowCreate = !sourceRunId && (!existing || saved.allowCreate);
-  const method = sourceRunId ? 'async' : saved?.date === date ? (saved.method || 'async') : 'async';
+  // Normal scheduled runs always use current API reads, including after a date rollover.
+  const method = sourceRunId || mode === 'repair' ? 'async' : 'query';
   return { version: 1, date, sourceRunId: existing || currentRunId, status: 'pending', allowCreate, method };
 }
 
@@ -43,7 +44,7 @@ export function finalAnalyticsCheck(mode, now = new Date()) {
 export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
   if (proof !== 'verified_missing=true\n') throw new Error('Analytics replacement was not verified.');
   state.analyticsHistory = [...(state.analyticsHistory || []), { ...previous, replacedAt: new Date().toISOString() }].slice(-8);
-  return analyticsDecision(null, date, '', currentRunId, 'daily');
+  return { ...analyticsDecision(null, date, '', currentRunId, 'daily'), method: 'async' };
 }
 
 export async function verifyAnalyticsSource(repository, token, runId, date, request = fetch) {
