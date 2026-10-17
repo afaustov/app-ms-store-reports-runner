@@ -1,0 +1,81 @@
+name: File Dock 1.0.11 Store submission
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [prepare, commit, status]
+        default: status
+      submission_id:
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: file-dock-store-recovery
+  cancel-in-progress: false
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: File Dock Store operation
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          OPERATION: ${{ inputs.operation }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+        shell: node {0}
+        run: |
+          const {createCipheriv,randomBytes,createHash}=require('node:crypto');
+          (async()=>{
+            const r=await fetch('https://login.microsoftonline.com/'+process.env.MS_TENANT_ID+'/oauth2/token',{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});
+            if(!r.ok)throw new Error('Auth HTTP '+r.status);
+            const token=(await r.json()).access_token;
+            const root='https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP';
+            async function api(path='',method='GET',body){
+              const r=await fetch(root+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+              const raw=await r.text();let d;try{d=JSON.parse(raw)}catch{d={}}
+              if(!r.ok){console.log(JSON.stringify({http:r.status,code:d.code,message:d.message}));throw new Error('Submission API failed')}
+              return d;
+            }
+            function canonical(v){if(Array.isArray(v))return v.map(canonical);if(v&&typeof v==='object')return Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])]));return v}
+            const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+            const app=await api();
+            console.log('APP='+JSON.stringify({published:app.lastPublishedApplicationSubmission,pending:app.pendingApplicationSubmission}));
+            let id=process.env.SUBMISSION_ID;
+            if(process.env.OPERATION==='prepare'){
+              if(app.pendingApplicationSubmission)throw new Error('Existing pending submission: refusing replacement');
+              const draft=await api('/submissions','POST');id=draft.id;
+              console.log('DRAFT_ID='+id);
+              if(draft.status!=='PendingCommit')throw new Error('Unexpected draft state');
+              const original=structuredClone(draft);
+              if(draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
+              draft.applicationPackages[0].fileStatus='PendingDelete';
+              draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              draft.targetPublishMode='Immediate';
+              draft.pricing.priceId='Tier1017';
+              const updated=await api('/submissions/'+id,'PUT',draft);
+              const readback=await api('/submissions/'+id);
+              if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
+              for(const k of Object.keys(original))if(!['applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
+              const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;
+              if(!same(beforePrice,afterPrice))throw new Error('Unexpected pricing change beyond authorized base tier');
+              console.log('VERIFIED_DIFF='+JSON.stringify({baseTier:{before:original.pricing.priceId,after:readback.pricing.priceId},trial:readback.pricing.trialPeriod,marketOverrideCount:Object.keys(readback.pricing.marketSpecificPricings||{}).length,packages:readback.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(original.listings,readback.listings)}));
+              const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),nonce);
+              const ciphertext=Buffer.concat([cipher.update(JSON.stringify({id,url:readback.fileUploadUrl||updated.fileUploadUrl||draft.fileUploadUrl})),cipher.final()]);
+              console.log('UPLOAD_ENVELOPE='+Buffer.concat([nonce,ciphertext,cipher.getAuthTag()]).toString('base64'));
+            }else{
+              if(!id||!/^\d+$/.test(id))throw new Error('Submission ID required');
+              const draft=await api('/submissions/'+id);
+              console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
+              if(process.env.OPERATION==='commit'){
+                if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw new Error('Commit refused: unexpected state or tier');
+                if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle')||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected package selection');
+                console.log('COMMIT_RESULT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
+              }
+            }
+            console.log('SUBMISSION_STATUS='+JSON.stringify(await api('/submissions/'+id+'/status')));
+          })().catch(e=>{console.error(e.message);process.exitCode=1});
