@@ -65,7 +65,7 @@ jobs:
               draft.pricing.priceId='Tier1017';
               draft.pricing.isAdvancedPricingModel=true;delete draft.pricing.sales;
               const uploadReference=draft.fileUploadUrl;
-              for(const key of ['id','status','statusDetails','fileUploadUrl','friendlyName'])delete draft[key];
+              
               const updated=await api('/submissions/'+id,'PUT',draft);
               const readback=await api('/submissions/'+id);
               if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
