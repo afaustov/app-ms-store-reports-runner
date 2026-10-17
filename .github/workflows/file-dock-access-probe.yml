@@ -42,4 +42,12 @@ jobs:
               if ref and ref.get('id'):
                   d=get(base+'/9NQJ0XTPV4RP/submissions/'+ref['id'])
                   if d:
-                      print(json.dumps({'kind':key,'id':d.get('id'),'status':d.get('status'),'packageDeliveryOptions':d.get('packageDeliveryOptions'),'applicationPackages':[{k:p.get(k) for k in ['id','fileName','fileStatus','version','architecture']} for p in d.get('applicationPackages',[])]}))
+                      print(json.dumps({'kind':key,'id':d.get('id'),'status':d.get('status'),'packageDeliveryOptions':d.get('packageDeliveryOptions'),'applicationPackages':[{k:p.get(k) for k in ['id','fileName','fileStatus','version','architecture']} for p in d.get('applicationPackages',[])]}))          try:
+              request=urllib.request.Request(base+'/9NQJ0XTPV4RP/submissions',data=b'',headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+              with urllib.request.urlopen(request,timeout=45) as r:
+                  draft=json.load(r); print(json.dumps({'DRAFT_HTTP':r.status,'id':draft.get('id'),'status':draft.get('status')}))
+          except urllib.error.HTTPError as e:
+              print('DRAFT_HTTP='+str(e.code))
+              try:
+                  d=json.loads(e.read()); print(json.dumps({'code':d.get('code'),'message':d.get('message')}))
+              except Exception: pass
