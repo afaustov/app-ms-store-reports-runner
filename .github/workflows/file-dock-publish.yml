@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [prepare, commit, status, cleanup]
+        options: [prepare, restore-listing, commit, status, cleanup]
         default: status
       submission_id:
         type: string
@@ -88,7 +88,19 @@ jobs:
               if(!id||!/^\d+$/.test(id))throw new Error('Submission ID required');
               const draft=await api('/submissions/'+id);
               console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packageDeliveryOptions:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
-              if(process.env.OPERATION==='cleanup'){
+              if(process.env.OPERATION==='restore-listing'){
+                if(id!=='1152921505702158990'||draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw Error('Unexpected official CLI draft');
+                const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
+                const expected=structuredClone(original.listings);
+                delete expected['en-us'].baseListing.privacyPolicy;delete expected['en-us'].baseListing.supportContact;delete expected['en-us'].baseListing.websiteUrl;delete expected['en-us'].baseListing.sortTitle;
+                for(const image of expected['en-us'].baseListing.images)delete image.description;
+                if(!same(expected,draft.listings))throw Error('Unexpected listing changes beyond known CLI omissions');
+                draft.listings=original.listings;
+                await api('/submissions/'+id,'PUT',draft);
+                const restored=await api('/submissions/'+id);
+                if(!same(restored.listings,original.listings)||restored.pricing.priceId!=='Tier1017')throw Error('Restoration readback mismatch');
+                console.log('LISTINGS_RESTORED_AND_VERIFIED');
+              }else if(process.env.OPERATION==='cleanup'){
                 if(id!=='1152921505702158468'||draft.status!=='CommitFailed')throw new Error('Refusing cleanup of unexpected draft');
                 await api('/submissions/'+id,'DELETE');
                 const remaining=await api();console.log('CLEANUP='+JSON.stringify({pending:remaining.pendingApplicationSubmission||null,published:remaining.lastPublishedApplicationSubmission}));return;
