@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [prepare, commit, status]
+        options: [prepare, commit, status, cleanup]
         default: status
       submission_id:
         type: string
@@ -78,7 +78,11 @@ jobs:
               if(!id||!/^\d+$/.test(id))throw new Error('Submission ID required');
               const draft=await api('/submissions/'+id);
               console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packageDeliveryOptions:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
-              if(process.env.OPERATION==='commit'){
+              if(process.env.OPERATION==='cleanup'){
+                if(id!=='1152921505702158468'||draft.status!=='CommitFailed')throw new Error('Refusing cleanup of unexpected draft');
+                await api('/submissions/'+id,'DELETE');
+                const remaining=await api();console.log('CLEANUP='+JSON.stringify({pending:remaining.pendingApplicationSubmission||null,published:remaining.lastPublishedApplicationSubmission}));return;
+              }else if(process.env.OPERATION==='commit'){
                 if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw new Error('Commit refused: unexpected state or tier');
                 if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle')||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected package selection');
                 console.log('COMMIT_RESULT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
