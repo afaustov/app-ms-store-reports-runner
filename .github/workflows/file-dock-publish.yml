@@ -48,12 +48,18 @@ jobs:
             let id=process.env.SUBMISSION_ID;
             if(process.env.OPERATION==='prepare'){
               if(app.pendingApplicationSubmission&&app.pendingApplicationSubmission.id!==process.env.SUBMISSION_ID)throw new Error('Unrelated pending submission: refusing replacement');
+              const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
               let draft=app.pendingApplicationSubmission?await api('/submissions/'+app.pendingApplicationSubmission.id):await api('/submissions','POST');
+                            if(app.pendingApplicationSubmission&&draft.status==='PendingCommit'){
+                if(draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0')throw new Error('Existing package work must be preserved');
+                for(const k of Object.keys(original))if(!['id','friendlyName','status','statusDetails','fileUploadUrl','packageDeliveryOptions'].includes(k)&&!same(original[k],draft[k]))throw new Error('Existing draft changes must be preserved: '+k);
+                await api('/submissions/'+draft.id,'DELETE');draft=await api('/submissions','POST');console.log('RECREATED_UNMODIFIED_UI_DRAFT');
+              }
               if(draft.status==='CommitFailed'){if(draft.id!==process.env.SUBMISSION_ID)throw new Error('Unowned failed draft');await api('/submissions/'+draft.id,'DELETE');draft=await api('/submissions','POST');}
               id=draft.id;
               console.log('DRAFT_ID='+id);
               if(!['PendingCommit','CommitFailed'].includes(draft.status))throw new Error('Unexpected draft state');
-              const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
+              
               if(original.applicationPackages.length!==1||original.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
               draft.applicationPackages=structuredClone(original.applicationPackages);
               draft.applicationPackages[0].fileStatus='PendingDelete';
