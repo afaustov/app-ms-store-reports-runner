@@ -1,0 +1,45 @@
+name: File Dock submission access probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read File Dock publishing access
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+        shell: python
+        run: |
+          import json, os, urllib.request, urllib.parse, urllib.error
+          body = urllib.parse.urlencode(dict(grant_type='client_credentials', client_id=os.environ['MS_CLIENT_ID'], client_secret=os.environ['MS_CLIENT_SECRET'], resource='https://manage.devcenter.microsoft.com')).encode()
+          req = urllib.request.Request('https://login.microsoftonline.com/'+os.environ['MS_TENANT_ID']+'/oauth2/token', data=body)
+          try:
+              with urllib.request.urlopen(req, timeout=45) as r: token=json.load(r)['access_token']
+          except urllib.error.HTTPError as e:
+              print('TOKEN_HTTP='+str(e.code)); raise SystemExit(1)
+          print('TOKEN_OK')
+          base='https://manage.devcenter.microsoft.com/v1.0/my/applications'
+          def get(url):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'Authorization':'Bearer '+token}),timeout=45) as r:
+                      print('API_HTTP='+str(r.status)); return json.load(r)
+              except urllib.error.HTTPError as e:
+                  print('API_HTTP='+str(e.code))
+                  try:
+                      d=json.loads(e.read()); print(json.dumps({'code':d.get('code'), 'message':d.get('message')}))
+                  except Exception: pass
+                  return None
+          app=get(base+'/9NQJ0XTPV4RP')
+          if not app: raise SystemExit(2)
+          print(json.dumps({k:app.get(k) for k in ['id','primaryName','lastPublishedApplicationSubmission','pendingApplicationSubmission']}))
+          for key in ['lastPublishedApplicationSubmission','pendingApplicationSubmission']:
+              ref=app.get(key)
+              if ref and ref.get('id'):
+                  d=get(base+'/9NQJ0XTPV4RP/submissions/'+ref['id'])
+                  if d:
+                      print(json.dumps({'kind':key,'id':d.get('id'),'status':d.get('status'),'packageDeliveryOptions':d.get('packageDeliveryOptions'),'applicationPackages':[{k:p.get(k) for k in ['id','fileName','fileStatus','version','architecture']} for p in d.get('applicationPackages',[])]}))
