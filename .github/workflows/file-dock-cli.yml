@@ -1,0 +1,64 @@
+name: File Dock official CLI recovery
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_envelope:
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: file-dock-store-recovery
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Download verified official CLI
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/microsoft/msstore-cli/releases/download/v0.4.3/MSStoreCLI-win-x64.zip' -OutFile cli.zip
+          if ((Get-FileHash cli.zip -Algorithm SHA256).Hash -ne 'C5FB008B616F96B1B55F1D52E4E0A5DD8F6C156129B5F52F9B97EC0EED11BD57') { throw 'CLI checksum mismatch' }
+          Expand-Archive cli.zip -DestinationPath cli
+          Get-ChildItem cli -Filter msstore.exe -Recurse | ForEach-Object { "CLI_EXE=$($_.FullName)" >> $env:GITHUB_ENV }
+      - name: Prepare through official CLI
+        shell: node {0}
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          BUNDLE_ENVELOPE: ${{ inputs.bundle_envelope }}
+        run: |
+          const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),cp=require('node:child_process');
+          (async()=>{
+            const blob=Buffer.from(process.env.BUNDLE_ENVELOPE,'base64'),dec=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),blob.subarray(0,12));
+            dec.setAuthTag(blob.subarray(-16));
+            const data=JSON.parse(Buffer.concat([dec.update(blob.subarray(12,-16)),dec.final()]));
+            if(!new URL(data.url).hostname.endsWith('.oaiusercontent.com'))throw Error('Unexpected transport');
+            const res=await fetch(data.url);if(!res.ok)throw Error('Bundle download HTTP '+res.status);
+            const bytes=Buffer.from(await res.arrayBuffer());
+            if(crypto.createHash('sha256').update(bytes).digest('hex')!=='fa6d65bd4cb6597a82d0e8c668d7667bc0a98a206c80f746f0d27eb675bdf76b')throw Error('Bundle checksum mismatch');
+            fs.mkdirSync('packages',{recursive:true});fs.writeFileSync('packages/File_Dock_Widget_1.0.11.0_neutral.msixbundle',bytes);
+            const auth=await fetch('https://login.microsoftonline.com/'+process.env.MS_TENANT_ID+'/oauth2/token',{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});
+            if(!auth.ok)throw Error('Auth failed');const token=(await auth.json()).access_token;
+            const root='https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP';
+            async function api(p='',method='GET'){const r=await fetch(root+p,{method,headers:{Authorization:'Bearer '+token}});const t=await r.text();if(!r.ok)throw Error('API HTTP '+r.status);return t?JSON.parse(t):{};}
+            const app=await api();const before=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
+            if(app.lastPublishedApplicationSubmission.id!=='1152921505702146390')throw Error('Baseline changed');
+            if(app.pendingApplicationSubmission){const id=app.pendingApplicationSubmission.id;const d=await api('/submissions/'+id);if(id!=='1152921505702158952'||d.status!=='CommitFailed')throw Error('Unowned pending draft');await api('/submissions/'+id,'DELETE');}
+            const cfgDir=path.join(process.env.LOCALAPPDATA,'Microsoft','MSStore.CLI');fs.mkdirSync(cfgDir,{recursive:true});
+            fs.writeFileSync(path.join(cfgDir,'telemetrySettings.json'),JSON.stringify({TelemetryEnabled:false}));
+            function cli(args){const r=cp.spawnSync(process.env.CLI_EXE,args,{encoding:'utf8',timeout:240000,env:process.env});let out=(r.stdout||'')+(r.stderr||'');out=out.replace(/https:\/\/[^\s"<>]*blob\.core\.windows\.net[^\s"<>]*/g,'[upload reference redacted]');console.log(out);if(r.status!==0)throw Error('Official CLI exit '+r.status);}
+            // SellerId is unused by the packaged API. An isolated sentinel satisfies CLI initialization only.
+            cli(['reconfigure','--tenantId',process.env.MS_TENANT_ID,'--clientId',process.env.MS_CLIENT_ID,'--clientSecret',process.env.MS_CLIENT_SECRET,'--sellerId','0']);
+            cli(['publish','packages','--appId','9NQJ0XTPV4RP','--inputDirectory','packages','--priceId','Tier1017','--noCommit']);
+            const current=await api();if(!current.pendingApplicationSubmission)throw Error('No pending draft after CLI');
+            const draft=await api('/submissions/'+current.pendingApplicationSubmission.id);
+            const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+            const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+            const changes=[];for(const k of Object.keys(before))if(!['id','status','friendlyName','statusDetails','fileUploadUrl'].includes(k)&&!same(before[k],draft[k]))changes.push(k);
+            console.log('CLI_PREPARED='+JSON.stringify({id:draft.id,status:draft.status,changedFields:changes,pricing:draft.pricing,delivery:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(before.listings,draft.listings)}));
+            if(draft.pricing.priceId!=='Tier1017'||!same(before.listings,draft.listings)||changes.some(k=>!['applicationPackages','pricing','packageDeliveryOptions','targetPublishMode'].includes(k)))throw Error('Unexpected metadata changes');
+          })().catch(e=>{console.error(e.message);process.exitCode=1});
