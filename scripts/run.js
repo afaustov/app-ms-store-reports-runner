@@ -182,7 +182,7 @@ export async function main(options = {}) {
 
     if (mode === 'daily' || mode === 'retry' || mode === 'validate' || mode === 'repair' || mode === 'direct') {
       await run('Install runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
-      const report = ['scripts/ms-store-daily-report.js'];
+      const report = ['scripts/ms-store-dashboard-album.js'];
       const apps = [
         ['agenda-widget', process.env.MS_STORE_APP_ID],
         ['process-monitor-widget', '9N7G2CL3HS4F'],
@@ -196,6 +196,10 @@ export async function main(options = {}) {
       });
       if (mode !== 'validate' && pending.length === 0) {
         console.log('All deliveries are already sent or protected; nothing resent.');
+        return;
+      }
+      if (mode !== 'validate' && pending.length !== apps.length) {
+        console.log('Some same-day reports are sent or protected; the complete album is not replayed.');
         return;
       }
       if (mode === 'validate') await run('Validate private source', 'npm', ['test']);
@@ -232,30 +236,21 @@ export async function main(options = {}) {
         await checkpoint();
       }
       if (localDate(now()) !== date) throw new Error('Local delivery date changed while collecting analytics.');
-      let failures = 0;
-      for (const [index, [key, appId]] of (mode === 'validate' ? apps : pending).entries()) {
-        const overrides = { REPORT_STATE_KEY: key, MS_STORE_APP_ID: appId };
-        const label = `Report ${index + 1}`;
-        try {
-          if (mode === 'validate') {
-            await run(`${label} prepare`, 'node', [...report, '--phase', 'prepare', '--output-dir', 'artifacts/report-output', '--dry-run'], overrides, checkout, 'prepare');
-            const png = await fs.readFile(path.join(checkout, 'artifacts/report-output', key, 'ms-store-dashboard.png'));
-            if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Invalid image.');
-            continue;
-          }
-          await deliverReport(
-            (phase) => run(`${label} ${phase}`, 'node', [...report, '--phase', phase, '--output-dir', 'artifacts/report-output'], overrides, checkout, phase === 'prepare' ? 'prepare' : phase === 'send' ? 'delivery' : 'analytics'),
-            checkpoint,
-          );
-        } catch (error) {
-          // A checkpoint failure must stop the run; it cannot be bypassed for another app.
-          if (error.checkpoint) throw error;
-          await checkpoint();
-          failures += 1;
+      if (mode === 'validate') {
+        await run('Album prepare', 'node', [...report, '--phase', 'prepare', '--dry-run'], {}, checkout, 'prepare');
+        for (const [key] of apps) {
+          const png = await fs.readFile(path.join(checkout, 'artifacts/report-output', key, 'ms-store-dashboard.png'));
+          if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Invalid image.');
         }
+        const caption = await fs.readFile(path.join(checkout, 'artifacts/report-output/ms-store-album-caption.txt'), 'utf8');
+        if (caption.length > 1024) throw new Error('Invalid album caption.');
+      } else {
+        await deliverReport(
+          (phase) => run(`Album ${phase}`, 'node', [...report, '--phase', phase], {}, checkout, phase === 'prepare' ? 'prepare' : phase === 'send' ? 'delivery' : 'none'),
+          checkpoint,
+        );
       }
-      if (failures) throw new Error('Some reports failed.');
-      console.log(mode === 'validate' ? 'Validated four dashboard images; no Telegram delivery attempted.' : 'Dashboard processing completed.');
+      console.log(mode === 'validate' ? 'Validated four dashboard images and the shared caption; no Telegram delivery attempted.' : 'Dashboard album processing completed.');
     } else if (mode === 'diagnose') {
       await run('Install diagnostic runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       await run('Diagnose Microsoft execution', 'node', ['scripts/diagnose-store-dashboard-analytics.js'], {}, checkout, 'analytics');

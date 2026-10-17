@@ -10,6 +10,8 @@
 
 ## Activation status
 
+- Daily/retry/direct dashboard execution uses a single private album entrypoint for prepare, mark-in-flight, and send. All four widget claims must reach the durable encrypted checkpoint before the one external send. Validation renders four images and checks the shared caption without sending. Existing same-day sent/protected markers, including a mixed legacy day, prevent automatic replay. Schedules, credential isolation, and encrypted-state format remain unchanged.
+
 - The public runner was activated on October 9, 2026. Legacy private scheduled workflows are disabled; `REPORTS_ENABLED=true` gates the public schedules.
 
 ## Dashboard asynchronous recovery

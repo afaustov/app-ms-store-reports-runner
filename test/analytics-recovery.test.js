@@ -66,11 +66,17 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
     }
     if (args.includes('--phase')) {
       const phase = args[args.indexOf('--phase') + 1];
-      const relative = `.report-state/${options.env.REPORT_STATE_KEY}/delivery-state.json`;
-      if (phase === 'send') { assert.equal(JSON.parse(saved.files[relative]).status, 'in_flight'); sends += 1; }
-      const target = path.join(options.cwd, relative);
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, JSON.stringify({ version: 1, status: phase === 'prepare' ? 'prepared' : phase === 'send' ? 'sent' : 'in_flight', deliveryDate: localDate() }));
+      assert.equal(args[0], 'scripts/ms-store-dashboard-album.js');
+      const keys = ['agenda-widget', 'process-monitor-widget', 'file-dock-widget', 'ai-usage-limits-codex'];
+      if (phase === 'send') {
+        assert.ok(keys.every(key => JSON.parse(saved.files[`.report-state/${key}/delivery-state.json`]).status === 'in_flight'));
+        sends += 1;
+      }
+      for (const key of keys) {
+        const target = path.join(options.cwd, `.report-state/${key}/delivery-state.json`);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, JSON.stringify({ version: 1, status: phase === 'prepare' ? 'prepared' : phase === 'send' ? 'sent' : 'in_flight', deliveryDate: localDate() }));
+      }
     }
     return { ok: true, output: '' };
   };
@@ -88,9 +94,13 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
   // An ordinary scheduled retry completes delivery without requiring manual direct mode.
   process.env.GITHUB_RUN_ID = '123456790';
   await main({ store, execute });
-  assert.equal(sends, 4);
+  assert.equal(sends, 1);
   assert.deepEqual(sources, ['123456789-1', '123456789-1', '123456789-1']);
   assert.equal(state.analytics.status, 'ready');
   await main({ store, execute });
-  assert.equal(sends, 4);
+  assert.equal(sends, 1);
+  // A partially delivered legacy day must not resend its successful reports in an album.
+  delete state.files['.report-state/ai-usage-limits-codex/delivery-state.json'];
+  await main({ store, execute });
+  assert.equal(sends, 1);
 });
