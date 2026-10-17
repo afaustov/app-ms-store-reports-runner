@@ -47,12 +47,13 @@ jobs:
             console.log('APP='+JSON.stringify({published:app.lastPublishedApplicationSubmission,pending:app.pendingApplicationSubmission}));
             let id=process.env.SUBMISSION_ID;
             if(process.env.OPERATION==='prepare'){
-              if(app.pendingApplicationSubmission)throw new Error('Existing pending submission: refusing replacement');
-              const draft=await api('/submissions','POST');id=draft.id;
+              if(app.pendingApplicationSubmission&&app.pendingApplicationSubmission.id!==process.env.SUBMISSION_ID)throw new Error('Unrelated pending submission: refusing replacement');
+              const draft=app.pendingApplicationSubmission?await api('/submissions/'+app.pendingApplicationSubmission.id):await api('/submissions','POST');id=draft.id;
               console.log('DRAFT_ID='+id);
               if(draft.status!=='PendingCommit')throw new Error('Unexpected draft state');
-              const original=structuredClone(draft);
-              if(draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
+              const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
+              if(original.applicationPackages.length!==1||original.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
+              draft.applicationPackages=structuredClone(original.applicationPackages);
               draft.applicationPackages[0].fileStatus='PendingDelete';
               draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
               draft.targetPublishMode='Immediate';
@@ -60,7 +61,7 @@ jobs:
               const updated=await api('/submissions/'+id,'PUT',draft);
               const readback=await api('/submissions/'+id);
               if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
-              for(const k of Object.keys(original))if(!['applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
+              for(const k of Object.keys(original))if(!['id','friendlyName','applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
               const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;
               if(!same(beforePrice,afterPrice))throw new Error('Unexpected pricing change beyond authorized base tier');
               console.log('VERIFIED_DIFF='+JSON.stringify({baseTier:{before:original.pricing.priceId,after:readback.pricing.priceId},trial:readback.pricing.trialPeriod,marketOverrideCount:Object.keys(readback.pricing.marketSpecificPricings||{}).length,packages:readback.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(original.listings,readback.listings)}));
