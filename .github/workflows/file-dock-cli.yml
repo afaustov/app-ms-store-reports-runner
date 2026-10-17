@@ -53,7 +53,7 @@ jobs:
             function cli(args){const r=cp.spawnSync(process.env.CLI_EXE,args,{encoding:'utf8',timeout:240000,env:process.env});let out=(r.stdout||'')+(r.stderr||'');out=out.replace(/https:\/\/[^\s"<>]*blob\.core\.windows\.net[^\s"<>]*/g,'[upload reference redacted]');console.log(out);if(r.status!==0)throw Error('Official CLI exit '+r.status);}
             // SellerId is unused by the packaged API. An isolated sentinel satisfies CLI initialization only.
             cli(['reconfigure','--tenantId',process.env.MS_TENANT_ID,'--clientId',process.env.MS_CLIENT_ID,'--clientSecret',process.env.MS_CLIENT_SECRET,'--sellerId','0']);
-            cli(['publish','packages','--appId','9NQJ0XTPV4RP','--inputDirectory','packages','--priceId','Tier1017','--noCommit']);
+            cli(['publish','packages/File_Dock_Widget_1.0.11.0_neutral.msixbundle','--appId','9NQJ0XTPV4RP','--inputDirectory','packages','--priceId','Tier1017','--noCommit']);
             const current=await api();if(!current.pendingApplicationSubmission)throw Error('No pending draft after CLI');
             const draft=await api('/submissions/'+current.pendingApplicationSubmission.id);
             const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
