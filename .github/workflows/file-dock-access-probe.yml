@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [prepare, commit, status]
+        options: [prepare, commit, status, cleanup]
         default: status
 permissions:
   contents: read
@@ -36,7 +36,10 @@ jobs:
             }
             let draft=await api();
             console.log(JSON.stringify({id:draft.id,status:draft.status,targetPublishMode:draft.targetPublishMode,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,fileStatus:p.fileStatus,version:p.version}))}));
-            if(process.env.OPERATION==='prepare'){
+            if(process.env.OPERATION==='cleanup'){
+              if(draft.status!=='PendingCommit'||draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0'||draft.applicationPackages[0].fileStatus!=='Uploaded')throw new Error('Refuse cleanup of modified submission');
+              await api('','DELETE'); console.log('OWN_UNMODIFIED_DRAFT_REMOVED');return;
+            }else if(process.env.OPERATION==='prepare'){
               if(draft.status!=='PendingCommit')throw new Error('Unexpected draft state');
               const original=structuredClone(draft);
               if(draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
