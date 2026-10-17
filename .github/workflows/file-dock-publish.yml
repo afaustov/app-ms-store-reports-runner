@@ -60,14 +60,17 @@ jobs:
               draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
               draft.targetPublishMode='Immediate';
               draft.packageDeliveryOptions=structuredClone(original.packageDeliveryOptions);
-              draft.pricing.priceId='Tier3';
+              draft.packageDeliveryOptions.isMandatoryUpdate=false;
+              draft.packageDeliveryOptions.mandatoryUpdateEffectiveDate='1601-01-01T00:00:00.0000000Z';
+              draft.pricing.priceId='Tier1017';
               const updated=await api('/submissions/'+id,'PUT',draft);
               const readback=await api('/submissions/'+id);
-              if(readback.pricing.priceId!=='Tier3')throw new Error('Price tier readback mismatch');
-              for(const k of Object.keys(original))if(!['id','friendlyName','applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
+              if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
+              for(const k of Object.keys(original))if(!['id','friendlyName','applicationPackages','pricing','packageDeliveryOptions','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
               const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;delete beforePrice.isAdvancedPricingModel;delete afterPrice.isAdvancedPricingModel;
               if(!same(beforePrice,afterPrice))throw new Error('Unexpected pricing change beyond authorized base tier');
-              console.log('VERIFIED_DIFF='+JSON.stringify({baseTier:{before:original.pricing.priceId,after:readback.pricing.priceId},trial:readback.pricing.trialPeriod,marketOverrideCount:Object.keys(readback.pricing.marketSpecificPricings||{}).length,packages:readback.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(original.listings,readback.listings)}));
+              if(!same(original.packageDeliveryOptions.packageRollout,readback.packageDeliveryOptions.packageRollout)||readback.packageDeliveryOptions.isMandatoryUpdate!==false)throw new Error('Unexpected delivery settings');
+              console.log('VERIFIED_DIFF='+JSON.stringify({mandatoryUpdate:readback.packageDeliveryOptions.isMandatoryUpdate,baseTier:{before:original.pricing.priceId,after:readback.pricing.priceId},trial:readback.pricing.trialPeriod,marketOverrideCount:Object.keys(readback.pricing.marketSpecificPricings||{}).length,packages:readback.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(original.listings,readback.listings)}));
               const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),nonce);
               const ciphertext=Buffer.concat([cipher.update(JSON.stringify({id,url:readback.fileUploadUrl||updated.fileUploadUrl||draft.fileUploadUrl})),cipher.final()]);
               console.log('UPLOAD_ENVELOPE='+Buffer.concat([nonce,ciphertext,cipher.getAuthTag()]).toString('base64'));
@@ -76,7 +79,7 @@ jobs:
               const draft=await api('/submissions/'+id);
               console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packageDeliveryOptions:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
               if(process.env.OPERATION==='commit'){
-                if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier3')throw new Error('Commit refused: unexpected state or tier');
+                if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw new Error('Commit refused: unexpected state or tier');
                 if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle')||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected package selection');
                 console.log('COMMIT_RESULT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
               }
