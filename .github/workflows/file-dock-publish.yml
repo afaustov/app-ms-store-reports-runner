@@ -57,6 +57,7 @@ jobs:
               draft.applicationPackages[0].fileStatus='PendingDelete';
               draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
               draft.targetPublishMode='Immediate';
+              draft.packageDeliveryOptions=structuredClone(original.packageDeliveryOptions);
               draft.pricing.priceId='Tier1017';
               const updated=await api('/submissions/'+id,'PUT',draft);
               const readback=await api('/submissions/'+id);
