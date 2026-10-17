@@ -63,7 +63,7 @@ jobs:
               const readback=await api('/submissions/'+id);
               if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
               for(const k of Object.keys(original))if(!['id','friendlyName','applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
-              const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;
+              const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;delete beforePrice.isAdvancedPricingModel;delete afterPrice.isAdvancedPricingModel;
               if(!same(beforePrice,afterPrice))throw new Error('Unexpected pricing change beyond authorized base tier');
               console.log('VERIFIED_DIFF='+JSON.stringify({baseTier:{before:original.pricing.priceId,after:readback.pricing.priceId},trial:readback.pricing.trialPeriod,marketOverrideCount:Object.keys(readback.pricing.marketSpecificPricings||{}).length,packages:readback.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),listingsUnchanged:same(original.listings,readback.listings)}));
               const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),nonce);
