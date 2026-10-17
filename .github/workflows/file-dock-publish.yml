@@ -48,7 +48,9 @@ jobs:
             let id=process.env.SUBMISSION_ID;
             if(process.env.OPERATION==='prepare'){
               if(app.pendingApplicationSubmission&&app.pendingApplicationSubmission.id!==process.env.SUBMISSION_ID)throw new Error('Unrelated pending submission: refusing replacement');
-              const draft=app.pendingApplicationSubmission?await api('/submissions/'+app.pendingApplicationSubmission.id):await api('/submissions','POST');id=draft.id;
+              let draft=app.pendingApplicationSubmission?await api('/submissions/'+app.pendingApplicationSubmission.id):await api('/submissions','POST');
+              if(draft.status==='CommitFailed'){if(draft.id!==process.env.SUBMISSION_ID)throw new Error('Unowned failed draft');await api('/submissions/'+draft.id,'DELETE');draft=await api('/submissions','POST');}
+              id=draft.id;
               console.log('DRAFT_ID='+id);
               if(!['PendingCommit','CommitFailed'].includes(draft.status))throw new Error('Unexpected draft state');
               const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
