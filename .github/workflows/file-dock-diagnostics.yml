@@ -24,4 +24,5 @@ jobs:
               if(!ref)continue;const d=await get('/submissions/'+ref.id);const safe=Object.fromEntries(Object.entries(d).filter(([k])=>!['fileUploadUrl','listings','trailers'].includes(k)));
               console.log('METADATA='+JSON.stringify({kind,keys:Object.keys(d),...safe}));console.log('STATUS='+JSON.stringify(await get('/submissions/'+ref.id+'/status')));
             }
+            if(app.pendingApplicationSubmission){const a=await get('/submissions/'+app.lastPublishedApplicationSubmission.id),b=await get('/submissions/'+app.pendingApplicationSubmission.id);function diff(x,y,p){if(JSON.stringify(x)===JSON.stringify(y))return;if(x&&y&&typeof x==='object'&&typeof y==='object'){for(const k of new Set([...Object.keys(x),...Object.keys(y)]))diff(x[k],y[k],p+'.'+k)}else console.log('LISTING_DIFF='+JSON.stringify({path:p,before:x,after:y}));}diff(a.listings,b.listings,'listings');}
           })().catch(e=>{console.error(e.message);process.exitCode=1});
