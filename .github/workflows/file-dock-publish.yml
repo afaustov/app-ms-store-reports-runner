@@ -79,5 +79,7 @@ jobs:
                 console.log('COMMIT_RESULT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
               }
             }
-            console.log('SUBMISSION_STATUS='+JSON.stringify(await api('/submissions/'+id+'/status')));
+            let state=await api('/submissions/'+id+'/status');console.log('SUBMISSION_STATUS='+JSON.stringify(state));
+            if(process.env.OPERATION==='status'){for(let i=0;i<5&&['CommitStarted','PreProcessing'].includes(state.status);i++){await new Promise(resolve=>setTimeout(resolve,20000));state=await api('/submissions/'+id+'/status');console.log('SUBMISSION_STATUS='+JSON.stringify(state));}}
+            if(['CommitFailed','PreProcessingFailed','CertificationFailed','PublishFailed','ReleaseFailed'].includes(state.status))throw new Error('Store submission failed: '+state.status);
           })().catch(e=>{console.error(e.message);process.exitCode=1});
