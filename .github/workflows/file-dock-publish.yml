@@ -50,7 +50,7 @@ jobs:
               if(app.pendingApplicationSubmission&&app.pendingApplicationSubmission.id!==process.env.SUBMISSION_ID)throw new Error('Unrelated pending submission: refusing replacement');
               const draft=app.pendingApplicationSubmission?await api('/submissions/'+app.pendingApplicationSubmission.id):await api('/submissions','POST');id=draft.id;
               console.log('DRAFT_ID='+id);
-              if(draft.status!=='PendingCommit')throw new Error('Unexpected draft state');
+              if(!['PendingCommit','CommitFailed'].includes(draft.status))throw new Error('Unexpected draft state');
               const original=await api('/submissions/'+app.lastPublishedApplicationSubmission.id);
               if(original.applicationPackages.length!==1||original.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
               draft.applicationPackages=structuredClone(original.applicationPackages);
@@ -58,10 +58,10 @@ jobs:
               draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
               draft.targetPublishMode='Immediate';
               draft.packageDeliveryOptions=structuredClone(original.packageDeliveryOptions);
-              draft.pricing.priceId='Tier1017';
+              draft.pricing.priceId='Tier3';
               const updated=await api('/submissions/'+id,'PUT',draft);
               const readback=await api('/submissions/'+id);
-              if(readback.pricing.priceId!=='Tier1017')throw new Error('Price tier readback mismatch');
+              if(readback.pricing.priceId!=='Tier3')throw new Error('Price tier readback mismatch');
               for(const k of Object.keys(original))if(!['id','friendlyName','applicationPackages','pricing','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&!same(original[k],readback[k]))throw new Error('Unexpected changed field '+k);
               const beforePrice=structuredClone(original.pricing),afterPrice=structuredClone(readback.pricing);delete beforePrice.priceId;delete afterPrice.priceId;delete beforePrice.isAdvancedPricingModel;delete afterPrice.isAdvancedPricingModel;
               if(!same(beforePrice,afterPrice))throw new Error('Unexpected pricing change beyond authorized base tier');
@@ -74,7 +74,7 @@ jobs:
               const draft=await api('/submissions/'+id);
               console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packageDeliveryOptions:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
               if(process.env.OPERATION==='commit'){
-                if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw new Error('Commit refused: unexpected state or tier');
+                if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier3')throw new Error('Commit refused: unexpected state or tier');
                 if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle')||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected package selection');
                 console.log('COMMIT_RESULT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
               }
