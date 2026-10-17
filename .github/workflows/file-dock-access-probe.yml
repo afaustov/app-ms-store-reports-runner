@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Recover File Dock 1.0.9
+      - name: Recover File Dock 1.0.11
         env:
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
@@ -41,8 +41,9 @@ jobs:
               const original=structuredClone(draft);
               if(draft.applicationPackages.length!==1||draft.applicationPackages[0].version!=='1.0.10.0')throw new Error('Unexpected package baseline');
               draft.applicationPackages[0].fileStatus='PendingDelete';
-              draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.9.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              draft.applicationPackages.push({fileName:'File_Dock_Widget_1.0.11.0_neutral.msixbundle',fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
               draft.targetPublishMode='Immediate';
+              delete draft.pricing;
               const updated=await api('','PUT',draft);
               for(const k of Object.keys(original))if(!['applicationPackages','targetPublishMode','status','statusDetails','fileUploadUrl'].includes(k)&&JSON.stringify(original[k])!==JSON.stringify(updated[k]))throw new Error('Unexpected changed field '+k);
               const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),nonce);
@@ -51,7 +52,7 @@ jobs:
               console.log('PREPARED');
             }else if(process.env.OPERATION==='commit'){
               if(draft.status!=='PendingCommit')throw new Error('Commit refused: unexpected state');
-              const old=draft.applicationPackages.find(p=>p.fileName==='File_Dock_Widget_1.0.9.0_neutral.msixbundle');
+              const old=draft.applicationPackages.find(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle');
               if(!old||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected rollback packages');
               console.log('COMMIT_RESULT='+JSON.stringify(await api('/commit','POST')));
             }
