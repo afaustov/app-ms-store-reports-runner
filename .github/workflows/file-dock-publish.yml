@@ -71,7 +71,7 @@ jobs:
             }else{
               if(!id||!/^\d+$/.test(id))throw new Error('Submission ID required');
               const draft=await api('/submissions/'+id);
-              console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
+              console.log('DRAFT='+JSON.stringify({id,status:draft.status,pricing:draft.pricing,packageDeliveryOptions:draft.packageDeliveryOptions,packages:draft.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version}))}));
               if(process.env.OPERATION==='commit'){
                 if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017')throw new Error('Commit refused: unexpected state or tier');
                 if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle')||!draft.applicationPackages.some(p=>p.version==='1.0.10.0'&&p.fileStatus==='PendingDelete'))throw new Error('Unexpected package selection');
