@@ -25,4 +25,5 @@ jobs:
             if(modern)await get('https://api.partner.microsoft.com/v1.0/ingestion/products?externalId=9NQJ0XTPV4RP&resourceTypes=Application',modern);
             const unpackaged=await token('https://api.store.microsoft.com');
             if(unpackaged)await get('https://api.store.microsoft.com/submission/v1/product/9NQJ0XTPV4RP/metadata/availability',unpackaged,{'X-Seller-Account-Id':'93106630'});
+            if(unpackaged)await get('https://api.store.microsoft.com/submission/v1/product/00013773569271761744/metadata/availability',unpackaged,{'X-Seller-Account-Id':'93106630'});
           })().catch(e=>{console.error(e.message);process.exitCode=1});
