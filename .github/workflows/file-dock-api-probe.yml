@@ -1,4 +1,4 @@
-name: File Dock modular API probe
+name: File Dock final API state
 on:
   workflow_dispatch:
 permissions:
@@ -6,9 +6,9 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
-      - name: Read only File Dock API capabilities
+      - name: Read published and pending versions
         shell: node {0}
         env:
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
@@ -16,11 +16,12 @@ jobs:
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
         run: |
           (async()=>{
-            async function token(resource){const r=await fetch('https://login.microsoftonline.com/'+process.env.MS_TENANT_ID+'/oauth2/token',{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource})});const d=await r.json();if(!r.ok){console.log('TOKEN_ERROR='+JSON.stringify({resource,http:r.status,error:d.error,codes:d.error_codes,correlation:d.correlation_id}));return null}return d.access_token;}
-            function safe(d){if(Array.isArray(d))return d.map(safe);if(d&&typeof d==='object')return Object.fromEntries(Object.entries(d).filter(([k])=>!/url|uri|token|listings/i.test(k)).map(([k,v])=>[k,safe(v)]));return d;}
-            async function get(url,t,extra={}){const r=await fetch(url,{headers:{Authorization:'Bearer '+t,'X-ClientName':'StoreBroker FileDock recovery probe',...extra}});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch{d={text:raw.slice(0,300)}}console.log('GET='+JSON.stringify({url,http:r.status,correlation:r.headers.get('MS-CorrelationId')||r.headers.get('X-CorrelationId'),data:safe(d)}));return r.ok?d:null;}
-            const legacy=await token('https://manage.devcenter.microsoft.com');
-            if(legacy){const root='https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP';const a=await get(root,legacy);await get(root+'/listflights?skip=0&top=100',legacy);if(a?.pendingApplicationSubmission){await get(root+'/submissions/'+a.pendingApplicationSubmission.id,legacy);await get(root+'/submissions/'+a.pendingApplicationSubmission.id+'/status',legacy);}}
-            const groupToken=await token('https://api.partner.microsoft.com');
-            if(groupToken){const r=await fetch('https://api.partner.microsoft.com/v1.0/ingestion/groups',{headers:{Authorization:'Bearer '+groupToken}});const data=await r.json().catch(()=>({}));console.log('GROUP_CAPABILITY='+JSON.stringify({http:r.status,count:data.value?.length,groups:(data.value||[]).map(g=>({id:g.id,resourceType:g.resourceType,type:g.type,memberCount:g.memberCount})),error:r.ok?undefined:data}));}
+            const auth=await fetch('https://login.microsoftonline.com/'+process.env.MS_TENANT_ID+'/oauth2/token',{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'}),signal:AbortSignal.timeout(45000)});
+            if(!auth.ok)throw Error('Authentication HTTP '+auth.status);
+            const t=(await auth.json()).access_token;
+            const root='https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP';
+            async function get(p=''){const r=await fetch(root+p,{headers:{Authorization:'Bearer '+t},signal:AbortSignal.timeout(60000)});if(!r.ok)throw Error('GET HTTP '+r.status);return r.json();}
+            const a=await get();
+            async function read(ref){if(!ref)return null;const d=await get('/submissions/'+ref.id);return {id:d.id,status:d.status,mode:d.targetPublishMode,pricing:d.pricing,packages:d.applicationPackages.map(p=>({fileName:p.fileName,version:p.version,status:p.fileStatus})),errors:d.statusDetails.errors};}
+            console.log('VERIFIED_STATE='+JSON.stringify({published:await read(a.lastPublishedApplicationSubmission),pending:await read(a.pendingApplicationSubmission)}));
           })().catch(e=>{console.error(e.message);process.exitCode=1});
