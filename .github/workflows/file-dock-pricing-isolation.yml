@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [test-market-overrides, status]
+        options: [test-market-overrides, test-no-trial, restore-baseline, status]
         default: status
 permissions:
   contents: read
@@ -43,6 +43,17 @@ jobs:
               const blob=await fetch(draft.fileUploadUrl,{method:'HEAD'});if(!blob.ok||Number(blob.headers.get('content-length'))!==9606457)throw Error('Uploaded archive missing');
               console.log('TEST_GUARDS='+JSON.stringify({id,publication:'Manual',price:'Tier1017',trial:'SevenDays',marketOverrides:{},archivePresent:true}));
               console.log('COMMIT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
+            }else if(['test-no-trial','restore-baseline'].includes(process.env.OPERATION)){
+              if(!['CommitFailed','PendingCommit'].includes(draft.status)||draft.targetPublishMode!=='Manual'||draft.pricing.priceId!=='Tier1017')throw Error('Unexpected diagnostic draft');
+              const before=structuredClone(draft);
+              draft.pricing.marketSpecificPricings={LB:'NotAvailable',EH:'NotAvailable'};
+              draft.pricing.trialPeriod=process.env.OPERATION==='test-no-trial'?'NoFreeTrial':'SevenDays';
+              delete draft.pricing.sales;
+              await api('/submissions/'+id,'PUT',draft);draft=await api('/submissions/'+id);
+              if(draft.targetPublishMode!=='Manual'||draft.pricing.priceId!=='Tier1017'||draft.pricing.trialPeriod!==(process.env.OPERATION==='test-no-trial'?'NoFreeTrial':'SevenDays')||!same(draft.pricing.marketSpecificPricings,{LB:'NotAvailable',EH:'NotAvailable'}))throw Error('Diagnostic guard failed');
+              for(const k of Object.keys(before))if(!['status','statusDetails','fileUploadUrl','pricing'].includes(k)&&!same(before[k],draft[k]))throw Error('Unexpected changed field: '+k);
+              console.log('TRIAL_TEST='+JSON.stringify({id,status:draft.status,publication:draft.targetPublishMode,pricing:draft.pricing}));
+              if(process.env.OPERATION==='test-no-trial')console.log('COMMIT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
             }else if(process.env.OPERATION!=='status')throw Error('Unknown operation');
             let state=await api('/submissions/'+id+'/status');console.log('STATE='+JSON.stringify(state));
             for(let i=0;i<5&&['CommitStarted','PreProcessing'].includes(state.status);i++){await new Promise(r=>setTimeout(r,20000));state=await api('/submissions/'+id+'/status');console.log('STATE='+JSON.stringify(state));}
