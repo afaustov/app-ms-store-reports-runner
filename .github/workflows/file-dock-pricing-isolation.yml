@@ -1,0 +1,51 @@
+name: File Dock pricing isolation
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [test-market-overrides, status]
+        default: status
+permissions:
+  contents: read
+concurrency:
+  group: file-dock-store-recovery
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate paid pricing with automatic publication disabled
+        shell: node {0}
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          (async()=>{
+            const a=await fetch('https://login.microsoftonline.com/'+process.env.MS_TENANT_ID+'/oauth2/token',{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});if(!a.ok)throw Error('Auth HTTP '+a.status);const token=(await a.json()).access_token;
+            const root='https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP',id='1152921505702160354';
+            async function api(p='',method='GET',body){const r=await fetch(root+p,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch{d={}}console.log('REQUEST='+JSON.stringify({path:p,method,http:r.status,correlation:r.headers.get('MS-CorrelationId'),request:r.headers.get('MS-RequestId')}));if(!r.ok)throw Error(JSON.stringify(d));return d;}
+            const canon=v=>Array.isArray(v)?v.map(canon):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon(v[k])])):v;const same=(a,b)=>JSON.stringify(canon(a))===JSON.stringify(canon(b));
+            const app=await api();if(app.lastPublishedApplicationSubmission.id!=='1152921505702146390'||app.pendingApplicationSubmission?.id!==id)throw Error('Unexpected app state');
+            let draft=await api('/submissions/'+id);
+            if(process.env.OPERATION==='test-market-overrides'){
+              if(draft.status!=='PendingCommit'||draft.pricing.priceId!=='Tier1017'||draft.pricing.trialPeriod!=='SevenDays')throw Error('Unexpected paid draft');
+              if(!same(draft.pricing.marketSpecificPricings,{LB:'NotAvailable',EH:'NotAvailable'}))throw Error('Unexpected existing exclusions');
+              if(!draft.applicationPackages.some(p=>p.fileName==='File_Dock_Widget_1.0.11.0_neutral.msixbundle'&&p.fileStatus==='PendingUpload'))throw Error('Package selection changed');
+              const before=structuredClone(draft);
+              draft.targetPublishMode='Manual';draft.pricing.marketSpecificPricings={};delete draft.pricing.sales;
+              await api('/submissions/'+id,'PUT',draft);draft=await api('/submissions/'+id);
+              if(draft.targetPublishMode!=='Manual'||draft.pricing.priceId!=='Tier1017'||draft.pricing.trialPeriod!=='SevenDays'||Object.keys(draft.pricing.marketSpecificPricings).length)throw Error('Safety guard readback failed');
+              for(const k of Object.keys(before))if(!['statusDetails','fileUploadUrl','pricing','targetPublishMode'].includes(k)&&!same(before[k],draft[k]))throw Error('Unexpected field changed: '+k);
+              const blob=await fetch(draft.fileUploadUrl,{method:'HEAD'});if(!blob.ok||Number(blob.headers.get('content-length'))!==9606457)throw Error('Uploaded archive missing');
+              console.log('TEST_GUARDS='+JSON.stringify({id,publication:'Manual',price:'Tier1017',trial:'SevenDays',marketOverrides:{},archivePresent:true}));
+              console.log('COMMIT='+JSON.stringify(await api('/submissions/'+id+'/commit','POST')));
+            }else if(process.env.OPERATION!=='status')throw Error('Unknown operation');
+            let state=await api('/submissions/'+id+'/status');console.log('STATE='+JSON.stringify(state));
+            for(let i=0;i<5&&['CommitStarted','PreProcessing'].includes(state.status);i++){await new Promise(r=>setTimeout(r,20000));state=await api('/submissions/'+id+'/status');console.log('STATE='+JSON.stringify(state));}
+            const end=await api('/submissions/'+id);console.log('FINAL='+JSON.stringify({status:end.status,publication:end.targetPublishMode,pricing:end.pricing,packages:end.applicationPackages.map(p=>({fileName:p.fileName,status:p.fileStatus,version:p.version})),statusDetails:end.statusDetails}));
+            if(end.targetPublishMode!=='Manual')throw Error('Publication mode changed unexpectedly');
+          })().catch(e=>{console.error(e.message.replace(/https:\/\/[^\s"<>]*blob\.core\.windows\.net[^\s"<>]*/g,'[upload reference redacted]'));process.exitCode=1});
