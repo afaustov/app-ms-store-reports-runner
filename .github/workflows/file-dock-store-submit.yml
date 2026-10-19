@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [inspect, prepare, context, commit, status]
+        options: [inspect, prepare, context, commit, status, cleanup]
         default: inspect
       submission_id:
         type: string
@@ -83,6 +83,17 @@ jobs:
             const id=process.env.SUBMISSION_ID;
             if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
             const submission=await api(`${base}/submissions/${id}`);
+            if(mode==='cleanup') {
+              if(id!=='1152921505702168109'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Refusing to delete an unowned or advanced draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Unexpected draft data; preserve for inspection.');
+              if(submission.applicationPackages?.some(p=>p.version!=='1.0.11.0'||p.fileStatus!=='Uploaded')) throw new Error('Draft package content advanced; preserve it.');
+              console.log('BEFORE_CLEANUP='+JSON.stringify(summary(submission)));
+              await api(`${base}/submissions/${id}`,'DELETE');
+              const after=await api(base);
+              const live=await api(`${base}/submissions/${after.lastPublishedApplicationSubmission.id}`);
+              console.log('AFTER_CLEANUP='+JSON.stringify({published:summary(live),pending:after.pendingApplicationSubmission||null,listingUnchanged:hash(live.listings)===hash(published.listings),pricingUnchanged:hash(live.pricing)===hash(published.pricing)}));
+              return;
+            }
             if(mode==='context') {
               if(app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Unexpected owned draft.');
               if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
