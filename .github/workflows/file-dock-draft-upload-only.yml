@@ -1,0 +1,61 @@
+name: File Dock draft package upload only
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [inspect, prepare]
+        default: inspect
+permissions: {}
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Guarded draft operation without commit
+        shell: bash
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          DRAFT_MODE: ${{ inputs.mode }}
+        run: |
+          node <<'NODE'
+          const crypto=require('node:crypto');
+          const appId='9NQJ0XTPV4RP';
+          const base=`https://manage.devcenter.microsoft.com/v1.0/my/applications/${appId}`;
+          const filename='File_Dock_Widget_1.0.12.0_neutral.msixbundle';
+          const hash=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+          const safe=v=>String(v).replace(/https?:\/\/[^\s"<>]+/g,'[URL]');
+          function summary(s){return {id:s.id,status:s.status,pricing:s.pricing,listingHash:hash(s.listings),packages:(s.applicationPackages||[]).map(p=>({fileName:p.fileName,version:p.version,fileStatus:p.fileStatus}))};}
+          (async()=>{
+           const a=await fetch(`https://login.microsoftonline.com/${process.env.MS_TENANT_ID}/oauth2/token`,{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});
+           const t=await a.json();if(!a.ok||!t.access_token)throw Error(`Authentication HTTP ${a.status}`);
+           async function api(path='',method='GET',body){const r=await fetch(base+path,{method,headers:{Authorization:`Bearer ${t.access_token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(90000)});const text=await r.text();if(!r.ok)throw Error(`HTTP ${r.status} ${safe(text).slice(0,2500)}`);return text?JSON.parse(text):{};}
+           const app=await api();const live=await api(`/submissions/${app.lastPublishedApplicationSubmission.id}`);
+           console.log('PUBLISHED='+JSON.stringify(summary(live)));
+           const pendingId=app.pendingApplicationSubmission?.id;
+           if(pendingId)console.log('PENDING='+JSON.stringify(summary(await api(`/submissions/${pendingId}`))));
+           if(process.env.DRAFT_MODE==='inspect')return;
+           if(process.env.DRAFT_MODE!=='prepare')throw Error('Unsupported mode; no commit or delete operation is implemented.');
+           if(pendingId)throw Error(`Existing draft ${pendingId} preserved. New draft requires an empty submission slot.`);
+           if(live.id!=='1152921505702161363'||hash(live.listings)!=='859b67925ed78d49d47f89f00f6f6ed6db28b31fb88e856eaa8dd4a95b06910d'||live.pricing.priceId!=='Base')throw Error('Published baseline changed; inspect first.');
+           const draft=await api('/submissions','POST');console.log('CREATED='+JSON.stringify(summary(draft)));
+           if(hash(draft.listings)!==hash(live.listings))throw Error('Created listing mismatch; preserve draft.');
+           const payload=structuredClone(draft);
+           payload.applicationPackages=payload.applicationPackages.map(p=>({...p,fileStatus:'PendingDelete'}));
+           payload.applicationPackages.push({fileName:filename,fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+           payload.pricing.priceId='Tier1017';delete payload.pricing.sales;
+           await api(`/submissions/${draft.id}`,'PUT',payload);
+           const check=await api(`/submissions/${draft.id}`);
+           const expected={...live.pricing,priceId:'Tier1017'};delete expected.isAdvancedPricingModel;
+           const actual={...check.pricing};delete actual.isAdvancedPricingModel;
+           if(hash(check.listings)!==hash(live.listings)||hash(actual)!==hash(expected))throw Error('Listing/pricing readback mismatch; no upload.');
+           console.log('PREPARED='+JSON.stringify(summary(check)));
+           const iv=crypto.randomBytes(12);const cipher=crypto.createCipheriv('aes-256-gcm',Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'),iv);cipher.setAAD(Buffer.from('ai-limits-store-submission-v1'));
+           const encrypted=Buffer.concat([cipher.update(JSON.stringify({appId,submissionId:draft.id,uploadUrl:check.fileUploadUrl,filename})),cipher.final()]);
+           console.log('ENCRYPTED='+Buffer.concat([iv,encrypted,cipher.getAuthTag()]).toString('base64'));
+          })().catch(e=>{console.error('FAILURE='+safe(e.message));process.exitCode=1;});
+          
+          NODE
