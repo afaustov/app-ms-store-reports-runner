@@ -12,10 +12,11 @@ on:
 permissions: {}
 jobs:
   submit:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 8
     steps:
       - name: Scoped Microsoft Store operation
+        shell: bash
         env:
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
@@ -56,7 +57,7 @@ jobs:
               const {spawnSync}=require('node:child_process');
               function curlProbe(label,accessToken) {
                 const url='https://partner.microsoft.com/en-us/dashboard/availability/api/product/9NQJ0XTPV4RP/submissions/1152921505702168508';
-                const result=spawnSync('curl',['--config','-','--silent','--show-error','--max-time','30','--dump-header','-','--output','/dev/null',url],{input:`header = "Authorization: Bearer ${accessToken}"\n`,encoding:'utf8'});
+                const result=spawnSync('curl',['--config','-','--silent','--show-error','--max-time','30','--dump-header','-','--output',process.platform==='win32'?'NUL':'/dev/null',url],{input:`header = "Authorization: Bearer ${accessToken}"\n`,encoding:'utf8'});
                 const statuses=[...result.stdout.matchAll(/HTTP\/[\d.]+\s+(\d+)/g)].map(m=>Number(m[1]));
                 const location=result.stdout.match(/^location:\s*(.+)$/im)?.[1]?.trim();
                 console.log('CURL_API_ACCESS='+JSON.stringify({label,exit:result.status,http:statuses.at(-1),redirectHost:location?new URL(location,url).hostname:null,error:safe(result.stderr).slice(0,800)}));
