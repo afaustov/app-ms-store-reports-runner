@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [inspect, fresh-nosales, watch, status]
+        options: [inspect, fresh-nosales, commitcandidate, watch, status]
         default: inspect
       submission_id:
         type: string
@@ -168,7 +168,7 @@ jobs:
               return;
             }
             if(mode==='commit'||mode==='commitcandidate') {
-              if(mode==='commitcandidate'&&(id!=='1152921505702168028'||published.id!=='1152921505702161363'||published.pricing.priceId!=='Base')) throw new Error('Unexpected candidate baseline.');
+              if(mode==='commitcandidate'&&(id!=='1152921505702168184'||published.id!=='1152921505702161363'||published.pricing.priceId!=='Base')) throw new Error('Unexpected candidate baseline.');
               // Read-only browser comparison verified identical USD 1.49 and all 240 market rows.
               const expectedPricing=mode==='commitcandidate'?{...published.pricing,priceId:'Tier1017'}:published.pricing;
               if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(expectedPricing)) throw new Error('Baseline listing/pricing mismatch.');
@@ -176,6 +176,12 @@ jobs:
               if(submission.status!=='PendingCommit') throw new Error(`Unexpected commit state: ${submission.status}`);
               const result=await api(`${base}/submissions/${id}/commit`,'POST');
               console.log('COMMIT='+JSON.stringify(result));
+              for(let attempt=0;attempt<12;attempt++) {
+                const state=await api(`${base}/submissions/${id}/status`);
+                console.log('WATCH='+JSON.stringify({attempt,...state}));
+                if(state.status!=='CommitStarted') break;
+                await new Promise(resolve=>setTimeout(resolve,15000));
+              }
             }
             console.log('SUBMISSION='+JSON.stringify(summary(await api(`${base}/submissions/${id}`))));
             console.log('STATUS='+JSON.stringify(await api(`${base}/submissions/${id}/status`)));
