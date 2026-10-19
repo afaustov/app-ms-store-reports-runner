@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [inspect, prepare, commit, status]
+        options: [inspect, prepare, context, commit, status]
         default: inspect
       submission_id:
         type: string
@@ -30,6 +30,7 @@ jobs:
           const base = `https://manage.devcenter.microsoft.com/v1.0/my/applications/${appId}`;
           const filename = 'AI_Usage_Limits_Codex_1.0.9.0_neutral.msixbundle';
           const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+          const pricingHash = value => { const {isAdvancedPricingModel,...economic}=value; return hash(economic); };
           const safe = value => String(value).replace(/https?:\/\/[^\s"<>]+/g, '[URL]');
           function summary(s) {
             return {id:s.id,status:s.status,pricing:s.pricing,publishMode:s.targetPublishMode,listingHash:hash(s.listings),locales:Object.keys(s.listings||{}),packages:(s.applicationPackages||[]).map(p=>({id:p.id,fileName:p.fileName,fileStatus:p.fileStatus,version:p.version,architecture:p.architecture})),details:s.statusDetails?{errors:s.statusDetails.errors,warnings:s.statusDetails.warnings}:undefined};
@@ -74,16 +75,24 @@ jobs:
               await api(`${base}/submissions/${draft.id}`,'PUT',draft);
               const check=await api(`${base}/submissions/${draft.id}`);
               if(hash(check.listings)!==hash(published.listings)) throw new Error('Listing changed on update.');
-              if(hash(check.pricing)!==hash(published.pricing)) throw new Error('Pricing changed on update.');
+              if(pricingHash(check.pricing)!==pricingHash(published.pricing)) throw new Error('Pricing changed on update.');
               console.log('PREPARED='+JSON.stringify(summary(check)));
-              encrypt({appId,submissionId:draft.id,uploadUrl,listingHash:hash(published.listings),pricingHash:hash(published.pricing),filename});
+              encrypt({appId,submissionId:draft.id,uploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(published.pricing),filename});
               return;
             }
             const id=process.env.SUBMISSION_ID;
             if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
             const submission=await api(`${base}/submissions/${id}`);
+            if(mode==='context') {
+              if(id!=='1152921505702167706'||submission.status!=='PendingCommit') throw new Error('Unexpected owned draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
+              if(!submission.applicationPackages?.some(p=>p.fileName===filename&&p.fileStatus==='PendingUpload')) throw new Error('Expected package missing.');
+              console.log('PREPARED='+JSON.stringify(summary(submission)));
+              encrypt({appId,submissionId:id,uploadUrl:submission.fileUploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(published.pricing),filename});
+              return;
+            }
             if(mode==='commit') {
-              if(hash(submission.listings)!==hash(published.listings)||hash(submission.pricing)!==hash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
               if(!submission.applicationPackages?.some(p=>p.fileName===filename)) throw new Error('Expected package missing.');
               if(submission.status!=='PendingCommit') throw new Error(`Unexpected commit state: ${submission.status}`);
               const result=await api(`${base}/submissions/${id}/commit`,'POST');
