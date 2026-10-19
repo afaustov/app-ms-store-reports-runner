@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [inspect, create, prepare, context, commit, status]
+        options: [inspect, create, candidate, prepare, context, commit, status]
         default: inspect
       submission_id:
         type: string
@@ -91,6 +91,21 @@ jobs:
             const id=process.env.SUBMISSION_ID;
             if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
             const submission=await api(`${base}/submissions/${id}`);
+            if(mode==='candidate') {
+              if(id!=='1152921505702168028'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Unexpected owned diagnostic draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Draft changed before candidate preparation.');
+              const candidate=structuredClone(submission);
+              candidate.pricing.priceId='Tier1017';
+              candidate.applicationPackages=candidate.applicationPackages.map(p=>({...p,fileStatus:'PendingDelete'}));
+              candidate.applicationPackages.push({fileName:filename,fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              console.log('CANDIDATE_CHANGE='+JSON.stringify({from:submission.pricing.priceId,to:'Tier1017',expectedUsdPrice:'1.49',otherPricingFieldsChanged:false,listingChanged:false}));
+              await api(`${base}/submissions/${id}`,'PUT',candidate);
+              const check=await api(`${base}/submissions/${id}`);
+              if(hash(check.listings)!==hash(published.listings)||pricingHash(check.pricing)!==pricingHash({...published.pricing,priceId:'Tier1017'})) throw new Error('Unexpected candidate readback.');
+              console.log('CANDIDATE='+JSON.stringify(summary(check)));
+              encrypt({appId,submissionId:id,uploadUrl:check.fileUploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(check.pricing),filename});
+              return;
+            }
             if(mode==='cleanup') {
               if(id!=='1152921505702168109'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Refusing to delete an unowned or advanced draft.');
               if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Unexpected draft data; preserve for inspection.');
