@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [inspect, create, candidate, prepare, context, commit, commitcandidate, status]
+        options: [inspect, create, candidate, prepare, context, commit, commitcandidate, watch, status]
         default: inspect
       submission_id:
         type: string
@@ -91,6 +91,16 @@ jobs:
             const id=process.env.SUBMISSION_ID;
             if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
             const submission=await api(`${base}/submissions/${id}`);
+            if(mode==='watch') {
+              for(let attempt=0;attempt<12;attempt++) {
+                const status=await api(`${base}/submissions/${id}/status`);
+                console.log('WATCH='+JSON.stringify({attempt,...status}));
+                if(status.status!=='CommitStarted') break;
+                await new Promise(resolve=>setTimeout(resolve,15000));
+              }
+              console.log('SUBMISSION='+JSON.stringify(summary(await api(`${base}/submissions/${id}`))));
+              return;
+            }
             if(mode==='candidate') {
               if(id!=='1152921505702168028'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Unexpected owned diagnostic draft.');
               if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Draft changed before candidate preparation.');
