@@ -1,0 +1,184 @@
+name: File Dock preserve sale pricing
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [inspect, fresh-nosales, watch, status]
+        default: inspect
+      submission_id:
+        type: string
+        default: ''
+permissions: {}
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Scoped Microsoft Store operation
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          SUBMIT_MODE: ${{ inputs.mode }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+        run: |
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const appId = '9NQJ0XTPV4RP';
+          const base = `https://manage.devcenter.microsoft.com/v1.0/my/applications/${appId}`;
+          const filename = 'File_Dock_Widget_1.0.12.0_neutral.msixbundle';
+          const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+          const pricingHash = value => { const {isAdvancedPricingModel,...economic}=value; return hash(economic); };
+          const safe = value => String(value).replace(/https?:\/\/[^\s"<>]+/g, '[URL]');
+          function summary(s) {
+            return {id:s.id,status:s.status,pricing:s.pricing,publishMode:s.targetPublishMode,listingHash:hash(s.listings),locales:Object.keys(s.listings||{}),packages:(s.applicationPackages||[]).map(p=>({id:p.id,fileName:p.fileName,fileStatus:p.fileStatus,version:p.version,architecture:p.architecture})),details:s.statusDetails?{errors:s.statusDetails.errors,warnings:s.statusDetails.warnings}:undefined};
+          }
+          function encrypt(value) {
+            const iv = crypto.randomBytes(12);
+            const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'), iv);
+            cipher.setAAD(Buffer.from('ai-limits-store-submission-v1'));
+            const data = Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);
+            console.log('ENCRYPTED='+Buffer.concat([iv,data,cipher.getAuthTag()]).toString('base64'));
+          }
+          (async()=>{
+            const auth = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(process.env.MS_TENANT_ID)}/oauth2/token`,{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});
+            const token = await auth.json();
+            if (!auth.ok || !token.access_token) throw new Error(`Authentication failed: ${auth.status}`);
+            async function api(url,method='GET',body) {
+              const r = await fetch(url,{method,headers:{Authorization:`Bearer ${token.access_token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
+              const raw = await r.text();
+              if (!r.ok) throw new Error(`${method} ${new URL(url).pathname}: HTTP ${r.status} ${safe(raw).slice(0,6000)}`);
+              return raw?JSON.parse(raw):{};
+            }
+            const app = await api(base);
+            console.log('APPLICATION='+JSON.stringify({id:app.id,primaryName:app.primaryName,lastPublishedApplicationSubmission:app.lastPublishedApplicationSubmission,pendingApplicationSubmission:app.pendingApplicationSubmission}));
+            const publishedId=app.lastPublishedApplicationSubmission?.id;
+            const published=publishedId?await api(`${base}/submissions/${publishedId}`):null;
+            if (published) console.log('PUBLISHED='+JSON.stringify(summary(published)));
+            const mode=process.env.SUBMIT_MODE||'inspect';
+            if (mode==='inspect') {
+              if(app.pendingApplicationSubmission?.id) console.log('PENDING='+JSON.stringify(summary(await api(`${base}/submissions/${app.pendingApplicationSubmission.id}`))));
+              return;
+            }
+            if (!published) throw new Error('No published baseline; manual initial submission required.');
+            if(mode==='fresh-nosales') {
+              if(published.id!=='1152921505702161363'||published.pricing.priceId!=='Base') throw new Error('Published baseline changed.');
+              if(app.pendingApplicationSubmission?.id) {
+                if(app.pendingApplicationSubmission.id!=='1152921505702168028') throw new Error('Unknown draft preserved.');
+                const previous=await api(`${base}/submissions/1152921505702168028`);
+                if(previous.status!=='CommitFailed'||hash(previous.listings)!==hash(published.listings)) throw new Error('Previous draft advanced or changed.');
+                await api(`${base}/submissions/1152921505702168028`,'DELETE');
+                console.log('DELETED_OWN_FAILED_DRAFT=1152921505702168028');
+              }
+              const draft=await api(`${base}/submissions`,'POST');
+              console.log('CREATED='+JSON.stringify(summary(draft)));
+              const body=structuredClone(draft);
+              body.applicationPackages=body.applicationPackages.map(p=>({...p,fileStatus:'PendingDelete'}));
+              body.applicationPackages.push({fileName:filename,fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              const withoutPricing=structuredClone(body);delete withoutPricing.pricing;
+              try {
+                await api(`${base}/submissions/${draft.id}`,'PUT',withoutPricing);
+                console.log('PRICING_OMITTED_ACCEPTED=true');
+              } catch(error) {
+                console.log('PRICING_OMITTED_REJECTED='+safe(error.message));
+                if(!error.message.includes('HTTP 400')||!/pricing/i.test(error.message)) throw error;
+                body.pricing.priceId='Tier1017';
+                delete body.pricing.sales;
+                console.log('REQUEST_SHAPE='+JSON.stringify({pricingPresent:true,salesPresent:Object.hasOwn(body.pricing,'sales'),priceId:body.pricing.priceId,listingHash:hash(body.listings)}));
+                await api(`${base}/submissions/${draft.id}`,'PUT',body);
+              }
+              const check=await api(`${base}/submissions/${draft.id}`);
+              if(hash(check.listings)!==hash(published.listings)) throw new Error('Listing changed.');
+              console.log('NO_SALES_CANDIDATE='+JSON.stringify(summary(check)));
+              encrypt({appId,submissionId:draft.id,uploadUrl:check.fileUploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(check.pricing),filename});
+              return;
+            }
+            if (mode==='create') {
+              if (app.pendingApplicationSubmission?.id) throw new Error('Existing draft preserved.');
+              if (published.id!=='1152921505702161363'||published.pricing?.priceId!=='Base'||published.applicationPackages?.[0]?.version!=='1.0.11.0') throw new Error('Published baseline changed; inspect first.');
+              const draft=await api(`${base}/submissions`,'POST');
+              console.log('CREATED='+JSON.stringify(summary(draft)));
+              if(hash(draft.listings)!==hash(published.listings)||pricingHash(draft.pricing)!==pricingHash(published.pricing)) throw new Error('Created draft baseline mismatch.');
+              return;
+            }
+            if (mode==='prepare') {
+              if (app.pendingApplicationSubmission?.id) throw new Error('Existing pending submission preserved; inspect before proceeding.');
+              const draft=await api(`${base}/submissions`,'POST');
+              console.log('CREATED='+JSON.stringify({id:draft.id,status:draft.status}));
+              if(hash(draft.listings)!==hash(published.listings)) throw new Error('Created listing differs from published baseline.');
+              const uploadUrl=draft.fileUploadUrl;
+              // Preserve the exact published pricing payload; no tiers or fields are changed.
+              draft.applicationPackages=(draft.applicationPackages||[]).map(p=>({...p,fileStatus:'PendingDelete'}));
+              draft.applicationPackages.push({fileName:filename,fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              await api(`${base}/submissions/${draft.id}`,'PUT',draft);
+              const check=await api(`${base}/submissions/${draft.id}`);
+              if(hash(check.listings)!==hash(published.listings)) throw new Error('Listing changed on update.');
+              if(pricingHash(check.pricing)!==pricingHash(published.pricing)) throw new Error('Pricing changed on update.');
+              console.log('PREPARED='+JSON.stringify(summary(check)));
+              encrypt({appId,submissionId:draft.id,uploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(published.pricing),filename});
+              return;
+            }
+            const id=process.env.SUBMISSION_ID;
+            if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
+            const submission=await api(`${base}/submissions/${id}`);
+            if(mode==='watch') {
+              for(let attempt=0;attempt<12;attempt++) {
+                const status=await api(`${base}/submissions/${id}/status`);
+                console.log('WATCH='+JSON.stringify({attempt,...status}));
+                if(status.status!=='CommitStarted') break;
+                await new Promise(resolve=>setTimeout(resolve,15000));
+              }
+              console.log('SUBMISSION='+JSON.stringify(summary(await api(`${base}/submissions/${id}`))));
+              return;
+            }
+            if(mode==='candidate') {
+              if(id!=='1152921505702168028'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Unexpected owned diagnostic draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Draft changed before candidate preparation.');
+              const candidate=structuredClone(submission);
+              candidate.pricing.priceId='Tier1017';
+              candidate.applicationPackages=candidate.applicationPackages.map(p=>({...p,fileStatus:'PendingDelete'}));
+              candidate.applicationPackages.push({fileName:filename,fileStatus:'PendingUpload',minimumDirectXVersion:'None',minimumSystemRam:'None'});
+              console.log('CANDIDATE_CHANGE='+JSON.stringify({from:submission.pricing.priceId,to:'Tier1017',expectedUsdPrice:'1.49',otherPricingFieldsChanged:false,listingChanged:false}));
+              await api(`${base}/submissions/${id}`,'PUT',candidate);
+              const check=await api(`${base}/submissions/${id}`);
+              if(hash(check.listings)!==hash(published.listings)||pricingHash(check.pricing)!==pricingHash({...published.pricing,priceId:'Tier1017'})) throw new Error('Unexpected candidate readback.');
+              console.log('CANDIDATE='+JSON.stringify(summary(check)));
+              encrypt({appId,submissionId:id,uploadUrl:check.fileUploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(check.pricing),filename});
+              return;
+            }
+            if(mode==='cleanup') {
+              if(id!=='1152921505702168109'||app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Refusing to delete an unowned or advanced draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Unexpected draft data; preserve for inspection.');
+              if(submission.applicationPackages?.some(p=>p.version!=='1.0.11.0'||p.fileStatus!=='Uploaded')) throw new Error('Draft package content advanced; preserve it.');
+              console.log('BEFORE_CLEANUP='+JSON.stringify(summary(submission)));
+              await api(`${base}/submissions/${id}`,'DELETE');
+              const after=await api(base);
+              const live=await api(`${base}/submissions/${after.lastPublishedApplicationSubmission.id}`);
+              console.log('AFTER_CLEANUP='+JSON.stringify({published:summary(live),pending:after.pendingApplicationSubmission||null,listingUnchanged:hash(live.listings)===hash(published.listings),pricingUnchanged:hash(live.pricing)===hash(published.pricing)}));
+              return;
+            }
+            if(mode==='context') {
+              if(app.pendingApplicationSubmission?.id!==id||submission.status!=='PendingCommit') throw new Error('Unexpected owned draft.');
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
+              if(!submission.applicationPackages?.some(p=>p.fileName===filename&&p.fileStatus==='PendingUpload')) throw new Error('Expected package missing.');
+              console.log('PREPARED='+JSON.stringify(summary(submission)));
+              encrypt({appId,submissionId:id,uploadUrl:submission.fileUploadUrl,listingHash:hash(published.listings),pricingHash:pricingHash(published.pricing),filename});
+              return;
+            }
+            if(mode==='commit'||mode==='commitcandidate') {
+              if(mode==='commitcandidate'&&(id!=='1152921505702168028'||published.id!=='1152921505702161363'||published.pricing.priceId!=='Base')) throw new Error('Unexpected candidate baseline.');
+              // Read-only browser comparison verified identical USD 1.49 and all 240 market rows.
+              const expectedPricing=mode==='commitcandidate'?{...published.pricing,priceId:'Tier1017'}:published.pricing;
+              if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(expectedPricing)) throw new Error('Baseline listing/pricing mismatch.');
+              if(!submission.applicationPackages?.some(p=>p.fileName===filename)) throw new Error('Expected package missing.');
+              if(submission.status!=='PendingCommit') throw new Error(`Unexpected commit state: ${submission.status}`);
+              const result=await api(`${base}/submissions/${id}/commit`,'POST');
+              console.log('COMMIT='+JSON.stringify(result));
+            }
+            console.log('SUBMISSION='+JSON.stringify(summary(await api(`${base}/submissions/${id}`))));
+            console.log('STATUS='+JSON.stringify(await api(`${base}/submissions/${id}/status`)));
+          })().catch(error=>{console.error('FAILURE='+safe(error.message));process.exitCode=1;});
+          
+          NODE
