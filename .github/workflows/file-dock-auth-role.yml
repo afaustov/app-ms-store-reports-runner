@@ -1,0 +1,49 @@
+name: File Dock API authentication diagnostics
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read-only authentication probes
+        shell: bash
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+        run: |
+          node <<'NODE'
+          const {spawnSync}=require('node:child_process');
+          const crypto=require('node:crypto');
+          const endpoint='https://partner.microsoft.com/en-us/dashboard/availability/api/product/9NQJ0XTPV4RP/submissions/1152921505702168508';
+          function safe(s){return String(s).replace(/Bearer\s+[^\s"<>]+/gi,'Bearer [REDACTED]').replace(/https?:\/\/[^\s"<>]+/g,'[URL]').replace(/[\w-]+\.[\w-]+\.[\w-]+/g,'[DOTTED]');}
+          function probe(label,url,token){
+           const input=['header = "Accept: application/json"',token?`header = "Authorization: Bearer ${token}"`:''].filter(Boolean).join('\n');
+           const r=spawnSync('curl.exe',['--config','-','--silent','--show-error','--max-time','30','--dump-header','-',url],{input,encoding:'utf8',maxBuffer:4*1024*1024});
+           const parts=r.stdout.split(/\r?\n\r?\n/);const head=parts.shift()||'';const body=parts.join('\n\n');
+           const headers=Object.fromEntries(head.split(/\r?\n/).filter(x=>/^(HTTP\/|content-type:|www-authenticate:|location:|server:|x-ms-|request-id:|x-azure-ref:)/i.test(x)).map(x=>{const i=x.indexOf(':');return i<0?['status',x]:[x.slice(0,i),safe(x.slice(i+1).trim())]}));
+           let details;
+           try{const j=JSON.parse(body); if(url.includes('manage.devcenter'))details={id:j.id,published:j.lastPublishedApplicationSubmission,pending:j.pendingApplicationSubmission};else details=JSON.parse(safe(JSON.stringify(j)));}catch{details=safe(body.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ')).slice(0,3000);}
+           console.log('PROBE='+JSON.stringify({label,headers,bodyLength:body.length,bodyHash:crypto.createHash('sha256').update(body).digest('hex'),details,exit:r.status,error:safe(r.stderr).slice(0,400)}));
+          }
+          (async()=>{
+           console.log('IDENTITY='+JSON.stringify({expectedApplication:'agenda-ms-store-report',clientIdMatches:process.env.MS_CLIENT_ID?.toLowerCase()==='7865cf88-5c70-4759-a0f4-c431fb18b15f'}));
+           probe('unauthenticated',endpoint);
+           for(const resource of ['https://manage.devcenter.microsoft.com','https://api.partner.microsoft.com','https://partner.microsoft.com']){
+            const r=await fetch(`https://login.microsoftonline.com/${process.env.MS_TENANT_ID}/oauth2/token`,{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource})});
+            const t=await r.json();
+            if(!r.ok||!t.access_token){console.log('AUTH='+JSON.stringify({resource,http:r.status,error:t.error,description:safe(t.error_description).slice(0,700)}));continue;}
+            const c=JSON.parse(Buffer.from(t.access_token.split('.')[1],'base64url'));
+            console.log('CLAIMS='+JSON.stringify({resource,aud:c.aud,roles:c.roles,scp:c.scp,idtyp:c.idtyp,version:c.ver}));
+            probe(resource,endpoint,t.access_token);
+            if(resource==='https://api.partner.microsoft.com'){
+             probe('modular-product','https://api.partner.microsoft.com/v1.0/ingestion/products/9NQJ0XTPV4RP',t.access_token);
+             probe('modular-groups','https://api.partner.microsoft.com/v1.0/ingestion/groups',t.access_token);
+            }
+            if(resource.includes('manage.devcenter'))probe('legacy-control','https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP',t.access_token);
+           }
+          })().catch(e=>{console.error(safe(e.message));process.exitCode=1;});
+          
+          NODE
