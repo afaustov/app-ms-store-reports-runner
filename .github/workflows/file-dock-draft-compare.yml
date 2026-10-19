@@ -1,0 +1,70 @@
+name: File Dock read-only draft comparison
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [inspect, fresh-nosales, watch, status]
+        default: inspect
+      submission_id:
+        type: string
+        default: ''
+permissions: {}
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Scoped Microsoft Store operation
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+          SUBMIT_MODE: ${{ inputs.mode }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+        run: |
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const appId = '9NQJ0XTPV4RP';
+          const base = `https://manage.devcenter.microsoft.com/v1.0/my/applications/${appId}`;
+          const filename = 'File_Dock_Widget_1.0.12.0_neutral.msixbundle';
+          const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+          const pricingHash = value => { const {isAdvancedPricingModel,...economic}=value; return hash(economic); };
+          const safe = value => String(value).replace(/https?:\/\/[^\s"<>]+/g, '[URL]');
+          function summary(s) {
+            return {id:s.id,status:s.status,pricing:s.pricing,publishMode:s.targetPublishMode,listingHash:hash(s.listings),locales:Object.keys(s.listings||{}),packages:(s.applicationPackages||[]).map(p=>({id:p.id,fileName:p.fileName,fileStatus:p.fileStatus,version:p.version,architecture:p.architecture})),details:s.statusDetails?{errors:s.statusDetails.errors,warnings:s.statusDetails.warnings}:undefined};
+          }
+          function encrypt(value) {
+            const iv = crypto.randomBytes(12);
+            const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(process.env.STATE_ENCRYPTION_KEY,'hex'), iv);
+            cipher.setAAD(Buffer.from('ai-limits-store-submission-v1'));
+            const data = Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);
+            console.log('ENCRYPTED='+Buffer.concat([iv,data,cipher.getAuthTag()]).toString('base64'));
+          }
+          (async()=>{
+            const auth = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(process.env.MS_TENANT_ID)}/oauth2/token`,{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://manage.devcenter.microsoft.com'})});
+            const token = await auth.json();
+            if (!auth.ok || !token.access_token) throw new Error(`Authentication failed: ${auth.status}`);
+            async function api(url,method='GET',body) {
+              const r = await fetch(url,{method,headers:{Authorization:`Bearer ${token.access_token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
+              const raw = await r.text();
+              if (!r.ok) throw new Error(`${method} ${new URL(url).pathname}: HTTP ${r.status} ${safe(raw).slice(0,6000)}`);
+              return raw?JSON.parse(raw):{};
+            }
+            const app=await api(base);
+            const records={};
+            function strip(value){
+              if(Array.isArray(value))return value.map(strip);
+              if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!/(fileUploadUrl|token|secret|password)/i.test(key)).map(([key,v])=>[key,strip(v)]));
+              if(typeof value==='string'&&/^https?:/.test(value)){try{const url=new URL(value);return url.origin+url.pathname;}catch{return '[URL]';}}
+              return value;
+            }
+            console.log('APPLICATION='+JSON.stringify({id:app.id,published:app.lastPublishedApplicationSubmission,pending:app.pendingApplicationSubmission}));
+            for(const id of [...new Set([app.lastPublishedApplicationSubmission?.id,app.pendingApplicationSubmission?.id,'1152921505702168508','1152921505702168184','1152921505702168028'].filter(Boolean))]){
+              try{const value=await api(`${base}/submissions/${id}`);records[id]=strip(value);console.log('READBACK='+JSON.stringify({...summary(value),topLevelKeys:Object.keys(value)}));}
+              catch(error){console.log('UNAVAILABLE='+JSON.stringify({id,error:safe(error.message)}));}
+            }
+            encrypt({capturedAt:new Date().toISOString(),application:strip(app),submissions:records});
+          })().catch(error=>{console.error('FAILURE='+safe(error.message));process.exitCode=1;});
+          NODE
