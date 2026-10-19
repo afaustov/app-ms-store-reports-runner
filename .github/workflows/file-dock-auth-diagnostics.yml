@@ -37,6 +37,10 @@ jobs:
             const c=JSON.parse(Buffer.from(t.access_token.split('.')[1],'base64url'));
             console.log('CLAIMS='+JSON.stringify({resource,aud:c.aud,roles:c.roles,scp:c.scp,idtyp:c.idtyp,version:c.ver}));
             probe(resource,endpoint,t.access_token);
+            if(resource==='https://api.partner.microsoft.com'){
+             probe('modular-product','https://api.partner.microsoft.com/v1.0/ingestion/products/9NQJ0XTPV4RP',t.access_token);
+             probe('modular-groups','https://api.partner.microsoft.com/v1.0/ingestion/groups',t.access_token);
+            }
             if(resource.includes('manage.devcenter'))probe('legacy-control','https://manage.devcenter.microsoft.com/v1.0/my/applications/9NQJ0XTPV4RP',t.access_token);
            }
           })().catch(e=>{console.error(safe(e.message));process.exitCode=1;});
