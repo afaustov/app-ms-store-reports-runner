@@ -65,6 +65,18 @@ jobs:
               try{const value=await api(`${base}/submissions/${id}`);records[id]=strip(value);console.log('READBACK='+JSON.stringify({...summary(value),topLevelKeys:Object.keys(value)}));}
               catch(error){console.log('UNAVAILABLE='+JSON.stringify({id,error:safe(error.message)}));}
             }
+            const availabilityUrl='https://partner.microsoft.com/en-us/dashboard/availability/api/product/9NQJ0XTPV4RP/submissions/1152921505702168508';
+            async function probe(label,accessToken){
+              const response=await fetch(availabilityUrl,{headers:{Authorization:`Bearer ${accessToken}`},redirect:'manual',signal:AbortSignal.timeout(60000)});
+              const location=response.headers.get('location');
+              console.log('V2_API_ACCESS='+JSON.stringify({label,http:response.status,contentType:response.headers.get('content-type'),redirectHost:location?new URL(location,availabilityUrl).hostname:null}));
+              if(response.ok&&response.headers.get('content-type')?.includes('json'))records[label]=strip(await response.json());
+            }
+            await probe('manage-token',token.access_token);
+            const partnerAuth=await fetch(`https://login.microsoftonline.com/${encodeURIComponent(process.env.MS_TENANT_ID)}/oauth2/token`,{method:'POST',body:new URLSearchParams({grant_type:'client_credentials',client_id:process.env.MS_CLIENT_ID,client_secret:process.env.MS_CLIENT_SECRET,resource:'https://api.partner.microsoft.com'})});
+            const partnerToken=await partnerAuth.json();
+            if(partnerAuth.ok&&partnerToken.access_token)await probe('partner-token',partnerToken.access_token);
+            else console.log('V2_PARTNER_AUTH='+JSON.stringify({http:partnerAuth.status,error:partnerToken.error}));
             encrypt({capturedAt:new Date().toISOString(),application:strip(app),submissions:records});
           })().catch(error=>{console.error('FAILURE='+safe(error.message));process.exitCode=1;});
           NODE
