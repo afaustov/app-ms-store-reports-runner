@@ -41,6 +41,11 @@ export function finalAnalyticsCheck(mode, now = new Date()) {
   return mode === 'retry' && hour >= 23;
 }
 
+export function shouldStartMissedDaily(mode, eventName, now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  return mode === 'retry' && eventName === 'schedule' && hour >= 6;
+}
+
 export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
   if (proof !== 'verified_missing=true\n') throw new Error('Analytics replacement was not verified.');
   state.analyticsHistory = [...(state.analyticsHistory || []), { ...previous, replacedAt: new Date().toISOString() }].slice(-8);
@@ -129,6 +134,10 @@ export async function main(options = {}) {
   let analytics = ['daily', 'retry', 'validate', 'repair', 'direct'].includes(mode)
     ? analyticsDecision(state.analytics, date, sourceRunId, `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, mode)
     : null;
+  if (!analytics && shouldStartMissedDaily(mode, process.env.GITHUB_EVENT_NAME, now())) {
+    analytics = analyticsDecision(state.analytics, date, '', `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`, 'daily');
+    console.log('Scheduled retry is starting the missed daily request.');
+  }
   if (mode === 'direct') analytics.method = 'query';
   if (mode === 'retry' && !analytics) {
     console.log('No current dashboard request to retry.');

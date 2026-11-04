@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { analyticsDecision, finalAnalyticsCheck, localDate, main, verifyAnalyticsSource, replaceUnstartedAnalytics } from '../scripts/run.js';
+import { analyticsDecision, finalAnalyticsCheck, localDate, main, verifyAnalyticsSource, replaceUnstartedAnalytics, shouldStartMissedDaily } from '../scripts/run.js';
+
+test('scheduled retries can start a missed daily request after 06 Singapore time', () => {
+  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T22:15:00Z')), true);
+  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T21:59:00Z')), false);
+  assert.equal(shouldStartMissedDaily('retry', 'workflow_dispatch', new Date('2026-11-03T22:15:00Z')), false);
+  assert.equal(shouldStartMissedDaily('daily', 'schedule', new Date('2026-11-03T22:15:00Z')), false);
+});
 
 test('request replacement needs explicit proof and retains the previous request and every delivery checkpoint', () => {
   const previous = analyticsDecision(null, '2026-10-14', '', '123456789-1', 'daily');
@@ -44,8 +51,8 @@ test('explicit recovery rejects stale dates and nonexistent run attempts', async
   await assert.rejects(verifyAnalyticsSource('owner/repo', 'token', '123456789-2', '2026-10-14', request('2026-10-13T17:00:00Z')));
 });
 
-test('pending daily run checkpoints once, retry sends only after readiness and durable in-flight state', async (t) => {
-  const values = { RUN_MODE: 'daily', PRIVATE_SOURCE_REPOSITORY: 'owner/private', GITHUB_RUN_ID: '123456789', GITHUB_RUN_ATTEMPT: '1',
+test('a scheduled retry starts a missed request, checkpoints it, and sends only once after readiness', async (t) => {
+  const values = { RUN_MODE: 'retry', GITHUB_EVENT_NAME: 'schedule', PRIVATE_SOURCE_REPOSITORY: 'owner/private', GITHUB_RUN_ID: '123456789', GITHUB_RUN_ATTEMPT: '1',
     MS_STORE_SOURCE_RUN_ID: '', SOURCE_DEPLOY_KEY: 'test-only', SOURCE_KNOWN_HOSTS: 'test-only', MS_STORE_APP_ID: '9NAGENDA0001' };
   const before = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
   Object.assign(process.env, values);
@@ -80,7 +87,7 @@ test('pending daily run checkpoints once, retry sends only after readiness and d
     }
     return { ok: true, output: '' };
   };
-  await main({ store, execute });
+  await main({ store, execute, now: () => new Date(`${localDate()}T10:00:00+08:00`) });
   assert.equal(sends, 0);
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'retry';
