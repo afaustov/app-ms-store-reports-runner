@@ -43,8 +43,17 @@ export function finalAnalyticsCheck(mode, now = new Date()) {
 }
 
 export function shouldStartMissedDaily(mode, eventName, now = new Date()) {
-  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', hour: '2-digit', hourCycle: 'h23' }).format(now));
-  return mode === 'retry' && eventName === 'schedule' && hour >= 6;
+  return mode === 'retry' && eventName === 'schedule' && !scheduledDashboardIsTooEarly(mode, eventName, now);
+}
+
+export function scheduledDashboardIsTooEarly(mode, eventName, now = new Date()) {
+  if (eventName !== 'schedule' || !['daily', 'retry'].includes(mode)) return false;
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Singapore', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const minutes = Number(time.find(part => part.type === 'hour').value) * 60
+    + Number(time.find(part => part.type === 'minute').value);
+  return minutes < 7 * 60 + 45;
 }
 
 export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
@@ -126,6 +135,10 @@ export async function main(options = {}) {
   if (sourceRunId && !validSource.test(sourceRunId)) throw new Error('Invalid source run ID.');
   if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
   if (mode === 'repair' && !sourceRunId) throw new Error('Repair requires the exact unstarted source run.');
+  if (scheduledDashboardIsTooEarly(mode, process.env.GITHUB_EVENT_NAME, now())) {
+    console.log('Morning delivery window has not opened; no source reads or delivery attempted.');
+    return;
+  }
   const store = options.store || new StateStore({ repository: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN, key: process.env.STATE_ENCRYPTION_KEY });
   const state = await store.load();
   const date = localDate(now());
