@@ -60,7 +60,10 @@ test('a scheduled retry starts a missed request, checkpoints it, and sends only 
   const state = { version: 1, files: {} };
   let saved;
   let ready = false;
+  let readyAfter = Infinity;
   let sends = 0;
+  let elapsed = 0;
+  const polling = { now: () => elapsed, sleep: async ms => { elapsed += ms; } };
   const sources = [];
   const store = { load: async () => state, save: async value => { saved = structuredClone(value); } };
   const execute = async (command, args, options) => {
@@ -68,8 +71,9 @@ test('a scheduled retry starts a missed request, checkpoints it, and sends only 
     if (args[0] === 'scripts/check-store-dashboard-analytics.js') {
       sources.push(options.env.MS_STORE_SOURCE_RUN_ID);
       assert.equal(saved.analytics.sourceRunId, '123456789-1');
-      assert.equal(options.env.DASHBOARD_FETCH_METHOD, 'query');
-      await fs.writeFile(options.env.GITHUB_OUTPUT, `ready=${ready}\n`);
+      assert.ok(['query', 'async'].includes(options.env.DASHBOARD_FETCH_METHOD));
+      if (options.env.DASHBOARD_FETCH_METHOD === 'async') assert.equal(saved.analytics.status, 'pending');
+      await fs.writeFile(options.env.GITHUB_OUTPUT, `ready=${ready || sources.length >= readyAfter}\n`);
     }
     if (args.includes('--phase')) {
       const phase = args[args.indexOf('--phase') + 1];
@@ -87,22 +91,25 @@ test('a scheduled retry starts a missed request, checkpoints it, and sends only 
     }
     return { ok: true, output: '' };
   };
-  await main({ store, execute, now: () => new Date(`${localDate()}T10:00:00+08:00`) });
+  await main({ store, execute, polling, now: () => new Date(`${localDate()}T10:00:00+08:00`) });
   assert.equal(sends, 0);
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'retry';
   const lastCheck = new Date(`${localDate()}T23:15:00+08:00`);
-  await assert.rejects(main({ store, execute, now: () => lastCheck }), /still pending/);
+  await assert.rejects(main({ store, execute, polling, now: () => lastCheck }), /still pending/);
   assert.equal(sends, 0);
   assert.equal(state.analytics.status, 'pending');
   process.env.RUN_MODE = 'daily';
-  ready = true;
+  readyAfter = sources.length + 2;
+  const beforeReady = elapsed;
   process.env.RUN_MODE = 'retry';
   // An ordinary scheduled retry completes delivery without requiring manual direct mode.
   process.env.GITHUB_RUN_ID = '123456790';
-  await main({ store, execute });
+  await main({ store, execute, polling });
   assert.equal(sends, 1);
-  assert.deepEqual(sources, ['123456789-1', '123456789-1', '123456789-1']);
+  assert.equal(elapsed - beforeReady, 90_000);
+  assert.equal(sources.length, 24);
+  assert.ok(sources.every(source => source === '123456789-1'));
   assert.equal(state.analytics.status, 'ready');
   await main({ store, execute });
   assert.equal(sends, 1);

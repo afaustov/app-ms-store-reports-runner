@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { collectFiles, restoreFiles, StateStore } from './state.js';
+import { waitForDashboard } from './dashboard-readiness.js';
 
 export function localDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
@@ -226,15 +227,26 @@ export async function main(options = {}) {
         await checkpoint();
       }
       const readinessPath = path.join(temporary, 'dashboard-readiness');
-      await run('Check dashboard analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
-        MS_STORE_SOURCE_RUN_ID: analytics.sourceRunId,
-        DASHBOARD_CREATE_MISSING: String(analytics.allowCreate),
-        DASHBOARD_FETCH_METHOD: analytics.method,
-        GITHUB_OUTPUT: readinessPath,
-      }, checkout, 'analytics');
-      const readiness = await fs.readFile(readinessPath, 'utf8');
-      if (readiness !== 'ready=true\n' && readiness !== 'ready=false\n') throw new Error('Invalid dashboard readiness.');
-      if (readiness === 'ready=false\n') {
+      const checkAnalytics = async (method) => {
+        if (localDate(now()) !== date) throw new Error('Local delivery date changed while collecting analytics.');
+        await fs.rm(readinessPath, { force: true });
+        await run('Check dashboard analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
+          MS_STORE_SOURCE_RUN_ID: analytics.sourceRunId,
+          DASHBOARD_CREATE_MISSING: String(analytics.allowCreate),
+          DASHBOARD_FETCH_METHOD: method,
+          GITHUB_OUTPUT: readinessPath,
+        }, checkout, 'analytics');
+        const readiness = await fs.readFile(readinessPath, 'utf8');
+        if (readiness !== 'ready=true\n' && readiness !== 'ready=false\n') throw new Error('Invalid dashboard readiness.');
+        return readiness === 'ready=true\n';
+      };
+      let ready = await checkAnalytics(analytics.method);
+      if (!ready && mode !== 'validate') {
+        await checkpoint();
+        console.log('Dashboard analytics pending; checking the saved export every 90 seconds for up to 15 minutes.');
+        ready = await waitForDashboard(() => checkAnalytics('async'), checkpoint, options.polling);
+      }
+      if (!ready) {
         await checkpoint();
         if (mode === 'validate' || finalAnalyticsCheck(mode, now())) throw new Error('Dashboard analytics are still pending.');
         console.log('Dashboard analytics pending; encrypted request retained for a later check.');
