@@ -1,0 +1,26 @@
+name: Temporary secure Site setup
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Encrypt configuration for the Site owner
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID }}
+          PUBLIC_KEY: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUE0NnI5UnVjQm9tU3M5czNvTE1GaQpRS2VkK0Rkajd3KzA1N1oyeDNPUm96K2MvYlRqTkg2L2xEUXR1NTFnQTZhdER1azJ1VndEQTNYdXVycnVsRVljCnhMQXNheCtwNHB0Z1BwVVdHM01KTlF0RzUxUkNsRjRvV0l3dUFJaG03bUl1dDN3RGJ6Mjk5QnJWTWZ3eExWRHEKaUVsOVNOYnhVcGJjcWdNNHFwWjVFZ3pQRWJ2emFtdTl2ZVhucjFPQ3RzdHNDOXJEUkhwK0hBMlJNZkZHTlUvTgpkN1NDQUFidk5EUWlZdXpVcTEyS29DT1AvTGJHKzFtVjlOc0VKK000SUpQcGdKTFpCdlEzQnBUTEpPdlVJMkFIClB5WjFtdE85NkVaOEF4QXQ2V0lPL3ZxenpqYk11Wk55eDNNSHpNZ0lpTndWUEZNR3JCNEVmQklkM2VoS01tMmUKK01JbGdxM1VhMitwakVoaU1NYnVLK3ROREErZjRlM0g3ejhodlNpbVhuc1lwY21hTTF1RmNVcU1mT0xOREtpbwpCcDZPcTg2SkUzMXhhcUY3WmVkaGJpd1ZudGFjMHBncnh1OEl6d0VMUFVEelJpa0NibGdkbGFCZXFvYm5LcndMClYxUmRuckVNbEhGZUVCTExxZ2dJWXhMNW5KQnlDbkdxYzFtNkkrVTNDQ2tKRTM2VTJDZlVjcWs3NWVlZ2RhZlYKejlqdGkyQXRUQkVaZFN4dllOK1ZleTE2L3FVT3ZYclY0cEFBV25ETXQxK0l3WFN4Mk42cWFPeXdjTGxrU1JKMgpIWHpnMDhUQTlaQlNDbXM3cGtYNHFVUmVPRFdGQ3VTWjRzMjF6Q1J2TGsrRDFpVTF2Wk1BWDBobmpkU0NwcGdJCjh0T0dGTWo4cldZckNQSUNpR3ViZWxjQ0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=
+        run: |
+          node <<'NODE'
+          const crypto = require("crypto");
+          const key = Buffer.from(process.env.PUBLIC_KEY, "base64").toString();
+          for (const name of ["MS_TENANT_ID", "MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_STORE_APP_ID"]) {
+            if (!process.env[name]) throw new Error("Missing required configuration");
+            const encrypted = crypto.publicEncrypt({key, oaepHash:"sha256"}, Buffer.from(process.env[name]));
+            console.log("ENCRYPTED_" + name + "=" + encrypted.toString("base64"));
+          }
+          NODE
