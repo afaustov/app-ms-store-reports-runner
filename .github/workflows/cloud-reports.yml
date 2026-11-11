@@ -13,7 +13,7 @@ on:
         type: string
         required: false
   schedule:
-    - cron: '0 21 * * *'
+    - cron: '17,47 16-23 * * *'
     - cron: '5,35 23 * * *'
     - cron: '45 23,0 * * *'
     - cron: '15 22,23,0-15 * * *'
