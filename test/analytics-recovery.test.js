@@ -4,18 +4,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { analyticsDecision, finalAnalyticsCheck, localDate, main, verifyAnalyticsSource, replaceUnstartedAnalytics, shouldStartMissedDaily, scheduledDashboardIsTooEarly } from '../scripts/run.js';
 
-test('scheduled retries can start a missed daily request after 07:45 Singapore time', () => {
-  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T23:45:00Z')), true);
-  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T23:44:59Z')), false);
-  assert.equal(shouldStartMissedDaily('retry', 'workflow_dispatch', new Date('2026-11-03T23:45:00Z')), false);
-  assert.equal(shouldStartMissedDaily('daily', 'schedule', new Date('2026-11-03T23:45:00Z')), false);
+test('scheduled retries can start a missed daily request after 07:30 Singapore time', () => {
+  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T23:30:00Z')), true);
+  assert.equal(shouldStartMissedDaily('retry', 'schedule', new Date('2026-11-03T23:29:59Z')), false);
+  assert.equal(shouldStartMissedDaily('retry', 'workflow_dispatch', new Date('2026-11-03T23:30:00Z')), false);
+  assert.equal(shouldStartMissedDaily('daily', 'schedule', new Date('2026-11-03T23:30:00Z')), false);
 });
 
 test('the delivery window uses actual Singapore time across UTC and local day boundaries', () => {
   for (const mode of ['daily', 'retry']) {
     assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-03T16:00:00Z')), true);
-    assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-03T23:44:59Z')), true);
-    assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-03T23:45:00Z')), false);
+    assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-03T23:29:59Z')), true);
+    assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-03T23:30:00Z')), false);
     assert.equal(scheduledDashboardIsTooEarly(mode, 'schedule', new Date('2026-11-04T00:00:00Z')), false);
     assert.equal(scheduledDashboardIsTooEarly(mode, 'workflow_dispatch', new Date('2026-11-03T16:00:00Z')), false);
   }
@@ -32,7 +32,7 @@ test('early scheduled dashboards do not load state, fetch sources, or send', asy
   const unexpected = async () => { assert.fail('Early run attempted upstream work'); };
   for (const mode of ['daily', 'retry']) {
     process.env.RUN_MODE = mode;
-    await main({ store: { load: unexpected, save: unexpected }, execute: unexpected, now: () => new Date('2026-11-03T23:44:59Z') });
+    await main({ store: { load: unexpected, save: unexpected }, execute: unexpected, now: () => new Date('2026-11-03T23:29:59Z') });
   }
 });
 
