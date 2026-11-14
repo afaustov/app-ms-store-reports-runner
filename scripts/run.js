@@ -107,6 +107,9 @@ const PROFILES = {
   none: [],
   app: ['MS_STORE_APP_ID'],
   analytics: MS_CREDENTIALS,
+  snapshot: ['MS_STORE_APP_ID', 'DASHBOARD_SNAPSHOT_TOKEN'],
+  snapshotPrepare: ['MS_STORE_APP_ID', 'NOTION_TOKEN', 'AGENDA_RUNTIME_INCIDENTS_DATA_SOURCE_ID', 'AGENDA_GITHUB_READ_TOKEN'],
+  snapshotDelivery: ['MS_STORE_APP_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
   prepare: [...MS_CREDENTIALS, 'NOTION_TOKEN', 'AGENDA_RUNTIME_INCIDENTS_DATA_SOURCE_ID', 'AGENDA_GITHUB_READ_TOKEN'],
   delivery: [...MS_CREDENTIALS, 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
   publication: ['REVIEW_FEED_DEPLOY_KEY'],
@@ -133,7 +136,7 @@ export async function main(options = {}) {
   const sourceRunId = process.env.MS_STORE_SOURCE_RUN_ID || '';
   const validSource = mode === 'diagnose' ? /^\d+-\d+(,\d+-\d+)?$/ : /^\d+-\d+$/;
   if (sourceRunId && !validSource.test(sourceRunId)) throw new Error('Invalid source run ID.');
-  if (mode === 'validate' && !sourceRunId) throw new Error('Validation requires existing analytics.');
+  if (mode === 'validate' && !sourceRunId && process.env.DASHBOARD_SOURCE !== 'site') throw new Error('Validation requires existing analytics.');
   if (mode === 'repair' && !sourceRunId) throw new Error('Repair requires the exact unstarted source run.');
   if (scheduledDashboardIsTooEarly(mode, process.env.GITHUB_EVENT_NAME, now())) {
     console.log('Morning delivery window has not opened; no source reads or delivery attempted.');
@@ -160,6 +163,8 @@ export async function main(options = {}) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'private-cloud-job-'));
   const checkout = path.join(temporary, 'source');
   const env = privateEnvironment();
+  const siteSource = process.env.DASHBOARD_SOURCE === 'site' && !['repair', 'direct'].includes(mode);
+  if (!siteSource) delete env.DASHBOARD_SOURCE;
   env.REPORT_TIMEZONE = 'Asia/Singapore';
   env.REPORT_DELIVERY_RUN_ID = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
   env.REVIEW_FEED_STATE_PATH = '.review-feed-state/pending.json';
@@ -246,9 +251,9 @@ export async function main(options = {}) {
         await run('Check dashboard analytics', 'node', ['scripts/check-store-dashboard-analytics.js'], {
           MS_STORE_SOURCE_RUN_ID: analytics.sourceRunId,
           DASHBOARD_CREATE_MISSING: String(analytics.allowCreate),
-          DASHBOARD_FETCH_METHOD: method,
+          DASHBOARD_FETCH_METHOD: siteSource ? 'site' : method,
           GITHUB_OUTPUT: readinessPath,
-        }, checkout, 'analytics');
+        }, checkout, siteSource ? 'snapshot' : 'analytics');
         const readiness = await fs.readFile(readinessPath, 'utf8');
         if (readiness !== 'ready=true\n' && readiness !== 'ready=false\n') throw new Error('Invalid dashboard readiness.');
         return readiness === 'ready=true\n';
@@ -256,13 +261,13 @@ export async function main(options = {}) {
       let ready = await checkAnalytics(analytics.method);
       if (!ready && mode !== 'validate') {
         await checkpoint();
-        console.log('Dashboard analytics pending; checking the saved export every 90 seconds for up to 15 minutes.');
+        console.log('Dashboard analytics pending; checking the saved source every 90 seconds for up to 15 minutes.');
         ready = await waitForDashboard(() => checkAnalytics('async'), checkpoint, options.polling);
       }
       if (!ready) {
         await checkpoint();
         if (mode === 'validate' || finalAnalyticsCheck(mode, now())) throw new Error('Dashboard analytics are still pending.');
-        console.log('Dashboard analytics pending; encrypted request retained for a later check.');
+        console.log('Dashboard analytics pending; encrypted checkpoint retained for a later check.');
         return;
       }
       if (mode !== 'validate') {
@@ -271,7 +276,7 @@ export async function main(options = {}) {
       }
       if (localDate(now()) !== date) throw new Error('Local delivery date changed while collecting analytics.');
       if (mode === 'validate') {
-        await run('Album prepare', 'node', [...report, '--phase', 'prepare', '--dry-run'], {}, checkout, 'prepare');
+        await run('Album prepare', 'node', [...report, '--phase', 'prepare', '--dry-run'], {}, checkout, siteSource ? 'snapshotPrepare' : 'prepare');
         for (const [key] of apps) {
           const png = await fs.readFile(path.join(checkout, 'artifacts/report-output', key, 'ms-store-dashboard.png'));
           if (!png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Invalid image.');
@@ -280,7 +285,7 @@ export async function main(options = {}) {
         if (caption.length > 1024) throw new Error('Invalid album caption.');
       } else {
         await deliverReport(
-          (phase) => run(`Album ${phase}`, 'node', [...report, '--phase', phase], {}, checkout, phase === 'prepare' ? 'prepare' : phase === 'send' ? 'delivery' : 'none'),
+          (phase) => run(`Album ${phase}`, 'node', [...report, '--phase', phase], {}, checkout, phase === 'prepare' ? (siteSource ? 'snapshotPrepare' : 'prepare') : phase === 'send' ? (siteSource ? 'snapshotDelivery' : 'delivery') : 'none'),
           checkpoint,
         );
       }
