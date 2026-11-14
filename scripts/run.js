@@ -53,7 +53,7 @@ export function scheduledDashboardIsTooEarly(mode, eventName, now = new Date()) 
   }).formatToParts(now);
   const minutes = Number(time.find(part => part.type === 'hour').value) * 60
     + Number(time.find(part => part.type === 'minute').value);
-  return minutes < 7 * 60 + 45;
+  return minutes < 7 * 60 + 30;
 }
 
 export function replaceUnstartedAnalytics(state, previous, date, currentRunId, proof) {
