@@ -143,3 +143,73 @@ test('a scheduled retry starts a missed request, checkpoints it, and sends only 
   await main({ store, execute });
   assert.equal(sends, 1);
 });
+
+test('Site snapshots wait and retry without Microsoft credentials, preserving one-send protection', async (t) => {
+  const values = { RUN_MODE: 'retry', GITHUB_EVENT_NAME: 'schedule', PRIVATE_SOURCE_REPOSITORY: 'owner/private', GITHUB_RUN_ID: '123456789', GITHUB_RUN_ATTEMPT: '1',
+    DASHBOARD_SOURCE: 'site', DASHBOARD_SNAPSHOT_TOKEN: 'private-test-token', MS_CLIENT_SECRET: 'must-not-pass', MS_STORE_SOURCE_RUN_ID: '', SOURCE_DEPLOY_KEY: 'test-only', SOURCE_KNOWN_HOSTS: 'test-only', MS_STORE_APP_ID: '9NAGENDA0001' };
+  const before = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
+  Object.assign(process.env, values);
+  t.after(() => { for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const state = { version: 1, files: {} };
+  let saved;
+  let ready = false;
+  let readyAfter = Infinity;
+  let sends = 0;
+  let elapsed = 0;
+  const polling = { now: () => elapsed, sleep: async ms => { elapsed += ms; } };
+  const sources = [];
+  const store = { load: async () => state, save: async value => { saved = structuredClone(value); } };
+  const execute = async (command, args, options) => {
+    if (command === 'git') await fs.mkdir(args.at(-1), { recursive: true });
+    if (args[0] === 'scripts/check-store-dashboard-analytics.js') {
+      sources.push(options.env.MS_STORE_SOURCE_RUN_ID);
+      assert.equal(saved.analytics.sourceRunId, '123456789-1');
+      assert.equal(options.env.DASHBOARD_FETCH_METHOD, 'site');
+      assert.equal(options.env.DASHBOARD_SNAPSHOT_TOKEN, 'private-test-token');
+      assert.equal(options.env.MS_CLIENT_SECRET, undefined);
+      if (options.env.DASHBOARD_FETCH_METHOD === 'async') assert.equal(saved.analytics.status, 'pending');
+      await fs.writeFile(options.env.GITHUB_OUTPUT, `ready=${ready || sources.length >= readyAfter}\n`);
+    }
+    if (args.includes('--phase')) {
+      const phase = args[args.indexOf('--phase') + 1];
+      assert.equal(args[0], 'scripts/ms-store-dashboard-album.js');
+      const keys = ['agenda-widget', 'process-monitor-widget', 'file-dock-widget', 'ai-usage-limits-codex'];
+      if (phase === 'send') {
+        assert.ok(keys.every(key => JSON.parse(saved.files[`.report-state/${key}/delivery-state.json`]).status === 'in_flight'));
+        sends += 1;
+      }
+      for (const key of keys) {
+        const target = path.join(options.cwd, `.report-state/${key}/delivery-state.json`);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, JSON.stringify({ version: 1, status: phase === 'prepare' ? 'prepared' : phase === 'send' ? 'sent' : 'in_flight', deliveryDate: localDate() }));
+      }
+    }
+    return { ok: true, output: '' };
+  };
+  await main({ store, execute, polling, now: () => new Date(`${localDate()}T10:00:00+08:00`) });
+  assert.equal(sends, 0);
+  assert.equal(state.analytics.status, 'pending');
+  process.env.RUN_MODE = 'retry';
+  const lastCheck = new Date(`${localDate()}T23:15:00+08:00`);
+  await assert.rejects(main({ store, execute, polling, now: () => lastCheck }), /still pending/);
+  assert.equal(sends, 0);
+  assert.equal(state.analytics.status, 'pending');
+  process.env.RUN_MODE = 'daily';
+  readyAfter = sources.length + 2;
+  const beforeReady = elapsed;
+  process.env.RUN_MODE = 'retry';
+  // An ordinary scheduled retry completes delivery without requiring manual direct mode.
+  process.env.GITHUB_RUN_ID = '123456790';
+  await main({ store, execute, polling });
+  assert.equal(sends, 1);
+  assert.equal(elapsed - beforeReady, 90_000);
+  assert.equal(sources.length, 24);
+  assert.ok(sources.every(source => source === '123456789-1'));
+  assert.equal(state.analytics.status, 'ready');
+  await main({ store, execute });
+  assert.equal(sends, 1);
+  // A partially delivered legacy day must not resend its successful reports in an album.
+  delete state.files['.report-state/ai-usage-limits-codex/delivery-state.json'];
+  await main({ store, execute });
+  assert.equal(sends, 1);
+});
