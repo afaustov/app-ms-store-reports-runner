@@ -1,5 +1,5 @@
 name: Cloud reports
-# Partial report validation retry
+# One-time partial report delivery
 
 on:
   push:
@@ -54,7 +54,7 @@ jobs:
       - name: Execute with encrypted checkpoints
         run: node scripts/run.js
         env:
-          RUN_MODE: ${{ github.event_name == 'push' && 'validate' || (github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || ((github.event.schedule == '15 22,23,0-15 * * *' || github.event.schedule == '45 23,0 * * *') && 'retry' || 'daily')))) }}
+          RUN_MODE: ${{ github.event_name == 'push' && 'daily' || (github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || ((github.event.schedule == '15 22,23,0-15 * * *' || github.event.schedule == '45 23,0 * * *') && 'retry' || 'daily')))) }}
           DASHBOARD_SOURCE: site
           DASHBOARD_SNAPSHOT_URL: https://store-widgets-dashboard.fironaust.chatgpt.site/api/snapshot
           DASHBOARD_SNAPSHOT_TOKEN: ${{ secrets.DASHBOARD_SNAPSHOT_TOKEN }}
