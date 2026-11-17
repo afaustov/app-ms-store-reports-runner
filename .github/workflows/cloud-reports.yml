@@ -12,6 +12,10 @@ on:
         description: Existing completed analytics or reviews runId-attempt
         type: string
         required: false
+      allow_partial:
+        description: Send available Site data and label unavailable datasets
+        type: boolean
+        default: false
   schedule:
     - cron: '17,47 16-23 * * *'
     # Morning checks at 07:30, 07:35, 07:40, 07:50 and 07:55 Singapore.
@@ -50,6 +54,7 @@ jobs:
           DASHBOARD_SOURCE: site
           DASHBOARD_SNAPSHOT_URL: https://store-widgets-dashboard.fironaust.chatgpt.site/api/snapshot
           DASHBOARD_SNAPSHOT_TOKEN: ${{ secrets.DASHBOARD_SNAPSHOT_TOKEN }}
+          DASHBOARD_ALLOW_PARTIAL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_partial || 'false' }}
           MS_STORE_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           GITHUB_TOKEN: ${{ github.token }}
           PRIVATE_SOURCE_REPOSITORY: ${{ vars.PRIVATE_SOURCE_REPOSITORY }}
