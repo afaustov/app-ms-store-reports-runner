@@ -1,6 +1,9 @@
 name: Cloud reports
 
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/cloud-reports.yml]
   workflow_dispatch:
     inputs:
       mode:
@@ -35,7 +38,7 @@ permissions:
 
 jobs:
   execute:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.REPORTS_ENABLED == 'true')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push' || vars.REPORTS_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -50,11 +53,11 @@ jobs:
       - name: Execute with encrypted checkpoints
         run: node scripts/run.js
         env:
-          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || ((github.event.schedule == '15 22,23,0-15 * * *' || github.event.schedule == '45 23,0 * * *') && 'retry' || 'daily'))) }}
+          RUN_MODE: ${{ github.event_name == 'push' && 'validate' || (github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '17 4 * * 0' && 'reviews' || (github.event.schedule == '47 5 * * 0' && 'collect' || ((github.event.schedule == '15 22,23,0-15 * * *' || github.event.schedule == '45 23,0 * * *') && 'retry' || 'daily')))) }}
           DASHBOARD_SOURCE: site
           DASHBOARD_SNAPSHOT_URL: https://store-widgets-dashboard.fironaust.chatgpt.site/api/snapshot
           DASHBOARD_SNAPSHOT_TOKEN: ${{ secrets.DASHBOARD_SNAPSHOT_TOKEN }}
-          DASHBOARD_ALLOW_PARTIAL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_partial || 'false' }}
+          DASHBOARD_ALLOW_PARTIAL: ${{ github.event_name == 'push' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.allow_partial || 'false') }}
           MS_STORE_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           GITHUB_TOKEN: ${{ github.token }}
           PRIVATE_SOURCE_REPOSITORY: ${{ vars.PRIVATE_SOURCE_REPOSITORY }}
