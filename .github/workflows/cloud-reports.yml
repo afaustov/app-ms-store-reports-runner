@@ -1,5 +1,5 @@
 name: Cloud reports
-# Retry partial delivery after snapshot check failure
+# Retry partial delivery with invalid datasets omitted
 
 on:
   push:
