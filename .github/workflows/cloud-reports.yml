@@ -1,4 +1,5 @@
 name: Cloud reports
+# Retry partial delivery after snapshot check failure
 
 on:
   push:
