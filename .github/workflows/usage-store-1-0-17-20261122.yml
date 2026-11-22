@@ -213,6 +213,14 @@ jobs:
             if(!/^\d+$/.test(id||'')) throw new Error('Explicit submission ID required.');
             const submission=await api(`${base}/submissions/${id}`);
             if(mode==='context') {
+            if(id!=='1152921505702473532'||submission.status!=='PendingCommit'||app.pendingApplicationSubmission?.id!==id)throw Error('Owned draft changed');
+            if(!submission.applicationPackages?.some(p=>p.fileName===filename&&p.fileStatus==='PendingUpload'))throw Error('Owned pending package changed');
+            submission.listings=published.listings;
+            await api(`${base}/submissions/${id}`,'PUT',submission);
+            const restored=await api(`${base}/submissions/${id}`);
+            console.log('TITLE_RESTORE='+JSON.stringify({expected:published.listings['en-us'].baseListing.title,actual:restored.listings['en-us'].baseListing.title,listingEqual:hash(restored.listings)===hash(published.listings)}));
+            Object.assign(submission,restored);
+
               if(id!==process.env.EXPECTED_SUBMISSION_ID||submission.status!=='PendingCommit') throw new Error('Unexpected owned draft.');
               if(hash(submission.listings)!==hash(published.listings)||pricingHash(submission.pricing)!==pricingHash(published.pricing)) throw new Error('Baseline listing/pricing mismatch.');
               if(!submission.applicationPackages?.some(p=>p.fileName===filename&&p.fileStatus==='PendingUpload')) throw new Error('Expected package missing.');
