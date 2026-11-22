@@ -170,12 +170,12 @@ jobs:
             const published=publishedId?await api(`${base}/submissions/${publishedId}`):null;
             if (published) console.log('PUBLISHED='+JSON.stringify(summary(published)));
             if (mode==='inspect') {
-    const owned=await api(`${base}/submissions/1152921505702473532`);
-    const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-    const differences=[];
-    function diff(a,b,path='') { if(JSON.stringify(canonical(a))===JSON.stringify(canonical(b)))return; if(a&&b&&typeof a==='object'&&typeof b==='object'&&!Array.isArray(a)&&!Array.isArray(b)){ for(const key of new Set([...Object.keys(a),...Object.keys(b)]))diff(a[key],b[key],path+'/'+key); } else differences.push({path,before:a,after:b}); }
-    diff(published.listings,owned.listings);
-    console.log('LISTING_DIFF='+JSON.stringify({semanticEqual:differences.length===0,differences}));
+              const owned=await api(`${base}/submissions/1152921505702473532`);
+              const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+              const differences=[];
+              function diff(a,b,path='') { if(JSON.stringify(canonical(a))===JSON.stringify(canonical(b)))return; if(a&&b&&typeof a==='object'&&typeof b==='object'&&!Array.isArray(a)&&!Array.isArray(b)){ for(const key of new Set([...Object.keys(a),...Object.keys(b)]))diff(a[key],b[key],path+'/'+key); } else differences.push({path,before:a,after:b}); }
+              diff(published.listings,owned.listings);
+              console.log('LISTING_DIFF='+JSON.stringify({semanticEqual:differences.length===0,differences}));
 
               if(app.pendingApplicationSubmission?.id) console.log('PENDING='+JSON.stringify(summary(await api(`${base}/submissions/${app.pendingApplicationSubmission.id}`))));
               return;
