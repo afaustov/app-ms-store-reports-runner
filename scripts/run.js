@@ -216,6 +216,7 @@ export async function main(options = {}) {
         ['process-monitor-widget', '9N7G2CL3HS4F'],
         ['file-dock-widget', '9NQJ0XTPV4RP'],
         ['ai-usage-limits-codex', '9NLQRWK76W61'],
+        ['your-day-wallpaper', '9N8QBD0TXN30'],
       ];
       const pending = apps.filter(([key]) => {
         const raw = state.files[`.report-state/${key}/delivery-state.json`];
@@ -289,7 +290,7 @@ export async function main(options = {}) {
           checkpoint,
         );
       }
-      console.log(mode === 'validate' ? 'Validated four dashboard images and the shared caption; no Telegram delivery attempted.' : 'Dashboard album processing completed.');
+      console.log(mode === 'validate' ? 'Validated five dashboard images and the shared caption; no Telegram delivery attempted.' : 'Dashboard album processing completed.');
     } else if (mode === 'diagnose') {
       await run('Install diagnostic runtime', 'npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
       await run('Diagnose Microsoft execution', 'node', ['scripts/diagnose-store-dashboard-analytics.js'], {}, checkout, 'analytics');
