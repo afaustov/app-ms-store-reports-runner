@@ -1,4 +1,5 @@
 name: Cloud reports
+# Retry after refreshing the added dashboard product.
 
 on:
   push:
